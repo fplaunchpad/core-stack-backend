@@ -1,7 +1,12 @@
 # import
 import os
 
-from nrm_app.settings import DATA_DIR, GEE_STORAGE_PROJECT, GEE_STORAGE_PROJECT_HELPER
+from nrm_app.settings import (
+    DATA_DIR,
+    GCS_BUCKET_NAME,
+    GEE_STORAGE_PROJECT,
+    GEE_STORAGE_PROJECT_HELPER,
+)
 
 
 def _data_path(*parts):
@@ -169,8 +174,6 @@ ODK_SYNC_URL_AGRI_FEEDBACK = (
 )
 
 # MARK: GEE Paths
-GCS_BUCKET_NAME = "core_stack"
-
 GEE_LITHOLOGY_ASSET_PATH = "projects/ee-corestackdev/assets/apps/mws/"
 
 GEE_ASSET_PATH = f"projects/{GEE_STORAGE_PROJECT}/assets/apps/mws/"
