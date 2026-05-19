@@ -13,6 +13,7 @@ No clipping or joining is delegated to GEE.
 from __future__ import annotations
 
 import csv
+import hashlib
 import html
 import json
 import re
@@ -838,6 +839,8 @@ def _publish_to_gee(
         if not overwrite:
             print(f"[{datetime.now()}] GEE asset already exists: {asset_id}")
             made_public = make_asset_public(asset_id) if make_public else None
+            if make_public and not made_public:
+                raise RuntimeError(f"Failed to make existing GEE asset public: {asset_id}")
             return asset_id, _inspect_uploaded_asset_geometry_health(asset_id), made_public
 
     # Fail before creating Earth Engine folders when the staging bucket is not usable.
@@ -853,6 +856,14 @@ def _publish_to_gee(
     )
     upload_file_to_gcs(csv_path, destination_blob, gee_account_id=gee_account_id)
     gcs_uri = f"gs://{settings.GCS_BUCKET_NAME}/{destination_blob}"
+    csv_path_obj = Path(csv_path)
+    csv_sha256 = hashlib.sha256()
+    with csv_path_obj.open("rb") as handle:
+        while True:
+            chunk = handle.read(8 * 1024 * 1024)
+            if not chunk:
+                break
+            csv_sha256.update(chunk)
     task_id = gcs_csv_to_gee_table_manifest_cli(
         gcs_uri,
         asset_id,
@@ -869,6 +880,8 @@ def _publish_to_gee(
             "district": district_slug,
             "block": block_slug,
             "layer_name": layer_name,
+            "local_gee_csv_sha256": csv_sha256.hexdigest(),
+            "local_gee_csv_size_bytes": str(csv_path_obj.stat().st_size),
         },
     )
     if not task_id:
@@ -880,8 +893,9 @@ def _publish_to_gee(
     if geometry_health.get("suspicious_world_bounds"):
         raise RuntimeError(f"GEE asset geometry looks suspicious after upload: {geometry_health}")
     made_public = make_asset_public(asset_id) if make_public else None
+    if make_public and not made_public:
+        raise RuntimeError(f"Failed to make GEE asset public: {asset_id}")
     return asset_id, geometry_health, made_public
-
 
 def generate_antyodaya_layer(
     state,
