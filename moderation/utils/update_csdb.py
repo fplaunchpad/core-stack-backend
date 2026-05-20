@@ -96,7 +96,7 @@ def sync_odk_data(get_edited_updated_all_submissions):
     gw_maintenance_submissions = (
         get_edited_updated_all_submissions.get_edited_updated_submissions(
             project_id=project_id,
-            form_id=corestack["propose maintenance on water structure form"],
+            form_id=corestack["propose maintenance on existing water recharge form"],
             filter_query=filter_query,
         )
     )
@@ -104,7 +104,7 @@ def sync_odk_data(get_edited_updated_all_submissions):
     swb_maintenance_submissions = (
         get_edited_updated_all_submissions.get_edited_updated_submissions(
             project_id=project_id,
-            form_id=corestack["propose maintenance on existing water recharge form"],
+            form_id=corestack["propose maintenance on water structure form"],
             filter_query=filter_query,
         )
     )
