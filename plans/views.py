@@ -628,7 +628,7 @@ class GlobalPlanPermission(permissions.BasePermission):
 
 class SuperAdminPlanPermission(permissions.BasePermission):
     """
-    Custom permission for superadmin only plan endpoints
+    Custom permission for superadmin or org admin plan endpoints
     """
 
     schema = None
@@ -637,13 +637,23 @@ class SuperAdminPlanPermission(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        return request.user.is_superadmin or request.user.is_superuser
+        if request.user.is_superadmin or request.user.is_superuser:
+            return True
+
+        return request.user.groups.filter(
+            name__in=["Organization Admin", "Org Admin", "Administrator"]
+        ).exists()
 
     def has_object_permission(self, request, view, obj):
         if hasattr(obj, "enabled") and not obj.enabled:
             return False
 
-        return request.user.is_superadmin or request.user.is_superuser
+        if request.user.is_superadmin or request.user.is_superuser:
+            return True
+
+        return request.user.groups.filter(
+            name__in=["Organization Admin", "Org Admin", "Administrator"]
+        ).exists()
 
 
 class GlobalPlanViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1052,19 +1062,28 @@ class OrganizationPlanViewSet(viewsets.ReadOnlyModelViewSet):
     schema = None
 
     serializer_class = PlanAppSerializer
-    permissions_classes = [permissions.IsAuthenticated, SuperAdminPlanPermission]
+    permission_classes = [permissions.IsAuthenticated, SuperAdminPlanPermission]
 
     def get_queryset(self):
         """
-        Filter plans by organizations for superadmins
+        Filter plans by organizations for superadmins and org admins
         """
-        if not (self.request.user.is_superadmin or self.request.user.is_superuser):
+        user = self.request.user
+        is_superadmin = user.is_superadmin or user.is_superuser
+        is_org_admin = user.groups.filter(
+            name__in=["Organization Admin", "Org Admin", "Administrator"]
+        ).exists()
+
+        if not (is_superadmin or is_org_admin):
             return PlanApp.objects.none()
 
         organization_id = self.kwargs.get("organization_pk")
         if organization_id:
             try:
                 organization = Organization.objects.get(pk=organization_id)
+                if is_org_admin and not is_superadmin:
+                    if user.organization != organization:
+                        return PlanApp.objects.none()
                 queryset = PlanApp.objects.filter(
                     organization=organization, enabled=True
                 )
