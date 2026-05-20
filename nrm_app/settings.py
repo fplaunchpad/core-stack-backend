@@ -133,9 +133,21 @@ INSTALLED_APPS = [
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
 else:
-    CORS_ALLOWED_ORIGINS = (
-        env.list("CORS_ALLOWED_ORIGINS") if "CORS_ALLOWED_ORIGINS" in os.environ else []
-    )
+    CORS_ALLOWED_ORIGINS = [
+        "http://gramvaanimoderationtest.s3-website.ap-south-1.amazonaws.com",
+        "https://nrm.core-stack.org",
+        "https://nrm.gramvaanidev.org",
+        "https://dashboard.core-stack.org",
+        "https://feature-logout-functionality.d2u6quqcimqsuk.amplifyapp.com",
+        "https://uat.dashboard.core-stack.org",
+        "https://www.explorer.core-stack.org",
+        "https://development.d2s4eeyazvtd2g.amplifyapp.com",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1",
+        "http://localhost:3000",
+        "http://localhost:3001",
+    ]
 
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://localhost:\d+$",
@@ -170,7 +182,7 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_RENDERER_CLASSES": [
-        "rest_framework.renderers.JSONRenderer",
+        "utilities.renderers.RoundedJSONRenderer",
     ],
 }
 
@@ -380,6 +392,16 @@ GCS_BUCKET_NAME = env("GCS_BUCKET_NAME")
 
 LOCAL_COMPUTE_API_URL = env("LOCAL_COMPUTE_API_URL")
 
+# MongoDB cache settings (optional)
+MONGODB_URI = env("MONGODB_URI", default="")
+MONGODB_DB_NAME = env("MONGODB_DB_NAME", default="core_stack")
+MONGODB_WATERBODIES_COLLECTION = env(
+    "MONGODB_WATERBODIES_COLLECTION", default="waterbodies_cache"
+)
+MONGODB_PUBLIC_API_V2_COLLECTION = env(
+    "MONGODB_PUBLIC_API_V2_COLLECTION", default="public_api_mws_v2_cache"
+)
+
 # NREGA settings
 NREGA_BUCKET = env("NREGA_BUCKET")
 
@@ -411,7 +433,7 @@ WHATSAPP_MEDIA_PATH = resolve_env_path(
 )
 
 BASE_URL = "https://geoserver.core-stack.org/"
-DEFAULT_FROM_EMAIL = "CoRE Stack Support <support@core-stack.org>"
+DEFAULT_FROM_EMAIL = "CoreStackSupport <contact@core-stack.org>"
 
 PLAN_REPORT_RECIPIENTS = env.list("PLAN_REPORT_RECIPIENTS", default=[])
 
@@ -432,4 +454,3 @@ lulc_years = [
 water_classes = [2, 3, 4]
 
 GEE_STORAGE_PROJECT = env("GEE_STORAGE_PROJECT")
-GEE_STORAGE_PROJECT_HELPER = env("GEE_STORAGE_PROJECT_HELPER")
