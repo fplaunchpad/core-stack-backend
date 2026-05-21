@@ -1,35 +1,325 @@
+import csv
+import hashlib
 import os
+from pathlib import Path
+from decimal import Decimal
 import shutil
+from typing import Any
 
-import requests
+try:
+    import requests
+except ImportError:  # pragma: no cover - local CSV helpers do not need requests.
+    requests = None
 
-from nrm_app.settings import (
-    BASE_DIR,
-    EARTH_DATA_USER,
-    EARTH_DATA_PASSWORD,
-    GEE_DEFAULT_ACCOUNT_ID,
-    GEE_HELPER_ACCOUNT_ID,
-    FERNET_KEY,
-    GCS_BUCKET_NAME,
-)
-from utilities.constants import GEE_ASSET_PATH
-import ee, geetools
+try:
+    from nrm_app.settings import (
+        BASE_DIR,
+        EARTH_DATA_USER,
+        EARTH_DATA_PASSWORD,
+        GEE_DEFAULT_ACCOUNT_ID,
+        GEE_HELPER_ACCOUNT_ID,
+        FERNET_KEY,
+        GCS_BUCKET_NAME,
+    )
+except Exception:  # pragma: no cover - supports local CSV helpers without Django.
+    BASE_DIR = os.getcwd()
+    EARTH_DATA_USER = ""
+    EARTH_DATA_PASSWORD = ""
+    GEE_DEFAULT_ACCOUNT_ID = None
+    GEE_HELPER_ACCOUNT_ID = None
+    FERNET_KEY = None
+    GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", "")
+
+try:
+    from utilities.constants import GEE_ASSET_PATH, GEE_PATHS
+except Exception:  # pragma: no cover - constants import settings in some envs.
+    GEE_ASSET_PATH = os.environ.get("GEE_ASSET_PATH", "")
+    GEE_PATHS = {"MWS": {"GEE_ASSET_PATH": GEE_ASSET_PATH}}
+
+from utilities.scripts.admin_utils import _is_world_bounds_polygon
+try:
+    import ee
+except ImportError:  # pragma: no cover - local CSV helpers do not need ee.
+    ee = None
+try:
+    import geetools
+except ImportError:  # pragma: no cover - local CSV helpers do not need geetools.
+    geetools = None
 import time
 import re
 import json
 import subprocess
-from google.cloud import storage
-from google.api_core import retry
-from utilities.geoserver_utils import Geoserver
-from gee_computing.models import GEEAccount
-from google.oauth2 import service_account
+try:
+    from google.cloud import storage
+    from google.api_core import retry
+    from google.oauth2 import service_account
+except ImportError:  # pragma: no cover - only required for GCS/GEE publishing.
+    storage = None
+    retry = None
+    service_account = None
+try:
+    from utilities.geoserver_utils import Geoserver
+except Exception:  # pragma: no cover - not needed by local CSV helpers.
+    Geoserver = None
+try:
+    from gee_computing.models import GEEAccount
+except Exception:  # pragma: no cover - only required for credential lookup.
+    GEEAccount = None
 import numpy as np
 import tempfile
-from cryptography.fernet import Fernet
+try:
+    from cryptography.fernet import Fernet
+except ImportError:  # pragma: no cover - only required for account import.
+    Fernet = None
 
 
 class GEEInitializationError(RuntimeError):
     """Raised when Earth Engine credentials cannot be initialized safely."""
+
+
+GEE_UPLOAD_CSV_DELIMITER = "\t"
+GEE_UPLOAD_CSV_QUALIFIER = '"'
+
+
+def _normalize_location(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(value or "").lower()).strip("_")
+
+
+def _location_slugs(state: str, district: str, block: str) -> tuple[str, str, str]:
+    return (
+        _normalize_location(state),
+        _normalize_location(district),
+        _normalize_location(block),
+    )
+
+
+def _json_dumps_text(payload: Any) -> str:
+    return json.dumps(payload, separators=(",", ":"), default=str)
+
+
+def _make_json_compatible(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            return int(value)
+        return float(value)
+    if isinstance(value, dict):
+        return {key: _make_json_compatible(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_make_json_compatible(item) for item in value]
+    return value
+
+
+def _prepare_geometry_for_ee_csv(geometry: Any) -> Any:
+    if geometry is None:
+        return None
+    if not isinstance(geometry, dict):
+        return _make_json_compatible(geometry)
+
+    def coerce_coordinate_value(value: Any) -> Any:
+        if isinstance(value, Decimal):
+            if value == value.to_integral_value():
+                return int(value)
+            return float(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return value
+            try:
+                if any(char in stripped for char in (".", "e", "E")):
+                    return float(stripped)
+                return int(stripped)
+            except ValueError:
+                return value
+        if isinstance(value, (list, tuple)):
+            return [coerce_coordinate_value(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: coerce_coordinate_value(item)
+                if key == "coordinates"
+                else _make_json_compatible(item)
+                for key, item in value.items()
+            }
+        return _make_json_compatible(value)
+
+    normalized = coerce_coordinate_value(dict(geometry))
+    geometry_type = str(normalized.get("type") or "")
+    if geometry_type not in {"Point", "MultiPoint"} and "geodesic" not in normalized:
+        normalized["geodesic"] = False
+    return normalized
+
+
+def _write_gee_upload_csv(gdf: Any, csv_path: Path) -> None:
+    import pandas as pd
+
+    df = pd.DataFrame(gdf.drop(columns="geometry"))
+    df["geometry"] = gdf.geometry.map(
+        lambda geom: _json_dumps_text(
+            _prepare_geometry_for_ee_csv(geom.__geo_interface__)
+        )
+        if geom is not None and not geom.is_empty
+        else None
+    )
+    df.to_csv(
+        csv_path,
+        index=False,
+        sep=GEE_UPLOAD_CSV_DELIMITER,
+        quotechar=GEE_UPLOAD_CSV_QUALIFIER,
+        quoting=csv.QUOTE_ALL,
+    )
+
+
+def _check_asset_health(asset_id: str) -> dict[str, Any]:
+    try:
+        fc = ee.FeatureCollection(asset_id)
+        first = ee.Feature(fc.first())
+        geom = first.geometry()
+        info = ee.Dictionary(
+            {
+                "feature_count": fc.size(),
+                "geometry_type": geom.type(),
+                "geodesic": geom.geodesic(),
+                "bounds": geom.bounds(),
+            }
+        ).getInfo()
+        info["suspicious_world_bounds"] = _is_world_bounds_polygon(info.get("bounds"))
+        return info
+    except Exception as exc:
+        return {
+            "inspection_error": str(exc),
+            "suspicious_world_bounds": False,
+        }
+
+
+def _inject_csv_to_gee(
+    csv_path: str,
+    state: str,
+    district: str,
+    block: str,
+    layer_name: str,
+    gee_account_id,
+    overwrite: bool,
+    make_public: bool,
+    *,
+    asset_base_path: str | None = None,
+    destination_prefix: str = "antyodaya",
+    asset_properties: dict[str, Any] | None = None,
+) -> tuple[str, str | None, bool | None]:
+    """
+    Publish an already-computed CSV to a GEE table asset.
+
+    The upload flow keeps GEE as a sink: initialize credentials, stage the CSV in
+    GCS, start the manifest upload, wait for task completion, and optionally make
+    the final asset public.
+    """
+    ee_initialize(gee_account_id, strict=True)
+
+    state_slug, district_slug, block_slug = _location_slugs(state, district, block)
+    asset_parent = get_gee_dir_path(
+        [state_slug, district_slug, block_slug],
+        asset_base_path or GEE_PATHS["MWS"]["GEE_ASSET_PATH"],
+    ).rstrip("/")
+    asset_id = f"{asset_parent}/{layer_name}"
+
+    if is_gee_asset_exists(asset_id, log=False):
+        if not overwrite:
+            print(f"GEE asset already exists: {asset_id}")
+            made_public = make_asset_public(asset_id) if make_public else None
+            if make_public and not made_public:
+                raise RuntimeError(f"Failed to make existing GEE asset public: {asset_id}")
+            return asset_id, None, made_public
+
+    # Fail before creating Earth Engine folders when the staging bucket is not usable.
+    probe_gcs_upload_access(gee_account_id=gee_account_id)
+    ensure_gee_folder_path(asset_parent)
+
+    if is_gee_asset_exists(asset_id, log=False) and overwrite:
+        ee.data.deleteAsset(asset_id)
+        time.sleep(5)
+
+    destination_blob = (
+        f"{destination_prefix}/{state_slug}/{district_slug}/{block_slug}/{Path(csv_path).name}"
+    )
+    upload_file_to_gcs(csv_path, destination_blob, gee_account_id=gee_account_id)
+    gcs_uri = f"gs://{GCS_BUCKET_NAME}/{destination_blob}"
+    csv_path_obj = Path(csv_path)
+    csv_sha256 = hashlib.sha256()
+    with csv_path_obj.open("rb") as handle:
+        while True:
+            chunk = handle.read(8 * 1024 * 1024)
+            if not chunk:
+                break
+            csv_sha256.update(chunk)
+
+    upload_properties = {
+        "source": "local_table_pipeline",
+        "state": state_slug,
+        "district": district_slug,
+        "block": block_slug,
+        "layer_name": layer_name,
+        "local_gee_csv_sha256": csv_sha256.hexdigest(),
+        "local_gee_csv_size_bytes": str(csv_path_obj.stat().st_size),
+    }
+    if asset_properties:
+        upload_properties.update({key: str(value) for key, value in asset_properties.items()})
+
+    task_id = gcs_csv_to_gee_table_manifest_cli(
+        gcs_uri,
+        asset_id,
+        gee_account_id,
+        primary_geometry_column="geometry",
+        crs="EPSG:4326",
+        max_vertices=1000000,
+        max_error_meters=1,
+        csv_delimiter=GEE_UPLOAD_CSV_DELIMITER,
+        csv_qualifier=GEE_UPLOAD_CSV_QUALIFIER,
+        asset_properties=upload_properties,
+    )
+    if not task_id:
+        raise RuntimeError("Failed to start GEE table upload task")
+    check_task_status([task_id])
+    made_public = make_asset_public(asset_id) if make_public else None
+    if make_public and not made_public:
+        raise RuntimeError(f"Failed to make GEE asset public: {asset_id}")
+    return asset_id, task_id, made_public
+
+
+def _publish_to_gee(
+    file_path: str,
+    state: str,
+    district: str,
+    block: str,
+    layer_name: str,
+    gee_account_id,
+    overwrite: bool,
+    make_public: bool,
+    *,
+    asset_base_path: str | None = None,
+    destination_prefix: str = "antyodaya",
+    asset_properties: dict[str, Any] | None = None,
+) -> tuple[str, str | None, bool | None]:
+    """
+    Publish a local file to GEE.
+
+    CSV table ingestion is currently the supported local-file path because it
+    preserves long Antyodaya column names and uses the manifest geometry column.
+    Other file formats can be routed here later without changing pipeline code.
+    """
+    suffix = Path(file_path).suffix.lower()
+    if suffix == ".csv":
+        return _inject_csv_to_gee(
+            csv_path=file_path,
+            state=state,
+            district=district,
+            block=block,
+            layer_name=layer_name,
+            gee_account_id=gee_account_id,
+            overwrite=overwrite,
+            make_public=make_public,
+            asset_base_path=asset_base_path,
+            destination_prefix=destination_prefix,
+            asset_properties=asset_properties,
+        )
+    raise ValueError(f"GEE local upload does not yet support {suffix or 'unknown'} files")
 
 
 def _normalize_gee_account_id(account_id=None, project=None):
@@ -64,6 +354,11 @@ def _normalize_gee_account_id(account_id=None, project=None):
 
 def _get_gee_account(account_id=None, project=None):
     normalized_account_id = _normalize_gee_account_id(account_id, project=project)
+    if GEEAccount is None:
+        raise GEEInitializationError(
+            "gee_computing.models.GEEAccount is unavailable. "
+            "Initialize Django before using GEE credential-backed operations."
+        )
 
     try:
         account = GEEAccount.objects.get(pk=normalized_account_id)
