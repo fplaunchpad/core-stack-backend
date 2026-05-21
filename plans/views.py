@@ -30,6 +30,7 @@ from .serializers import (
     PlanCreateSerializer,
     PlanUpdateSerializer,
 )
+from rest_framework.pagination import PageNumberPagination
 
 STATE_CENTROIDS = {
     "Jammu & Kashmir": {"lat": 34.0837, "lon": 74.7973},
@@ -628,7 +629,7 @@ class GlobalPlanPermission(permissions.BasePermission):
 
 class SuperAdminPlanPermission(permissions.BasePermission):
     """
-    Custom permission for superadmin only plan endpoints
+    Custom permission for superadmin or org admin plan endpoints
     """
 
     schema = None
@@ -637,13 +638,23 @@ class SuperAdminPlanPermission(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        return request.user.is_superadmin or request.user.is_superuser
+        if request.user.is_superadmin or request.user.is_superuser:
+            return True
+
+        return request.user.groups.filter(
+            name__in=["Organization Admin", "Org Admin", "Administrator"]
+        ).exists()
 
     def has_object_permission(self, request, view, obj):
         if hasattr(obj, "enabled") and not obj.enabled:
             return False
 
-        return request.user.is_superadmin or request.user.is_superuser
+        if request.user.is_superadmin or request.user.is_superuser:
+            return True
+
+        return request.user.groups.filter(
+            name__in=["Organization Admin", "Org Admin", "Administrator"]
+        ).exists()
 
 
 class GlobalPlanViewSet(viewsets.ReadOnlyModelViewSet):
@@ -935,12 +946,14 @@ class GlobalPlanViewSet(viewsets.ReadOnlyModelViewSet):
                 "gender_breakdown": steward_gender_breakdown,
                 "by_organization": steward_by_org if steward_by_org else None,
             },
-            "completion_rate": round((completed_plans / total_plans * 100), 2)
-            if total_plans > 0
-            else 0,
-            "dpr_generation_rate": round((dpr_generated / total_plans * 100), 2)
-            if total_plans > 0
-            else 0,
+            "completion_rate": (
+                round((completed_plans / total_plans * 100), 2)
+                if total_plans > 0
+                else 0
+            ),
+            "dpr_generation_rate": (
+                round((dpr_generated / total_plans * 100), 2) if total_plans > 0 else 0
+            ),
         }
 
         if organization_breakdown:
@@ -1042,6 +1055,12 @@ class GlobalPlanViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(response_data, status=status.HTTP_200_OK)
 
 
+class OrganizationPlanPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
 class OrganizationPlanViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet for organization level watershed planning ops
@@ -1052,19 +1071,29 @@ class OrganizationPlanViewSet(viewsets.ReadOnlyModelViewSet):
     schema = None
 
     serializer_class = PlanAppSerializer
-    permissions_classes = [permissions.IsAuthenticated, SuperAdminPlanPermission]
+    permission_classes = [permissions.IsAuthenticated, SuperAdminPlanPermission]
+    pagination_class = OrganizationPlanPagination
 
     def get_queryset(self):
         """
-        Filter plans by organizations for superadmins
+        Filter plans by organizations for superadmins and org admins
         """
-        if not (self.request.user.is_superadmin or self.request.user.is_superuser):
+        user = self.request.user
+        is_superadmin = user.is_superadmin or user.is_superuser
+        is_org_admin = user.groups.filter(
+            name__in=["Organization Admin", "Org Admin", "Administrator"]
+        ).exists()
+
+        if not (is_superadmin or is_org_admin):
             return PlanApp.objects.none()
 
         organization_id = self.kwargs.get("organization_pk")
         if organization_id:
             try:
                 organization = Organization.objects.get(pk=organization_id)
+                if is_org_admin and not is_superadmin:
+                    if user.organization != organization:
+                        return PlanApp.objects.none()
                 queryset = PlanApp.objects.filter(
                     organization=organization, enabled=True
                 )
@@ -1162,12 +1191,14 @@ class OrganizationPlanViewSet(viewsets.ReadOnlyModelViewSet):
             "age": user.age if user else None,
             "gender": user.get_gender_display() if user and user.gender else None,
             "education_qualification": user.education_qualification if user else None,
-            "organization": {
-                "id": user.organization.id,
-                "name": user.organization.name,
-            }
-            if user and user.organization
-            else None,
+            "organization": (
+                {
+                    "id": user.organization.id,
+                    "name": user.organization.name,
+                }
+                if user and user.organization
+                else None
+            ),
             "projects": [{"id": k, "name": v} for k, v in projects.items()],
             "plans": [
                 {"id": p["id"], "name": p["plan"], "is_completed": p["is_completed"]}
@@ -1687,12 +1718,14 @@ class PlanViewSet(viewsets.ModelViewSet):
                 "total_stewards": total_stewards,
                 "by_organization": steward_by_org_list if steward_by_org_list else None,
             },
-            "completion_rate": round((completed_plans / total_plans * 100), 2)
-            if total_plans > 0
-            else 0,
-            "dpr_generation_rate": round((dpr_generated / total_plans * 100), 2)
-            if total_plans > 0
-            else 0,
+            "completion_rate": (
+                round((completed_plans / total_plans * 100), 2)
+                if total_plans > 0
+                else 0
+            ),
+            "dpr_generation_rate": (
+                round((dpr_generated / total_plans * 100), 2) if total_plans > 0 else 0
+            ),
         }
 
         if state_breakdown:
@@ -2001,12 +2034,14 @@ class PlanViewSet(viewsets.ModelViewSet):
             "age": user.age if user else None,
             "gender": user.get_gender_display() if user and user.gender else None,
             "education_qualification": user.education_qualification if user else None,
-            "organization": {
-                "id": user.organization.id,
-                "name": user.organization.name,
-            }
-            if user and user.organization
-            else None,
+            "organization": (
+                {
+                    "id": user.organization.id,
+                    "name": user.organization.name,
+                }
+                if user and user.organization
+                else None
+            ),
             "projects": [{"id": k, "name": v} for k, v in projects.items()],
             "plans": [
                 {"id": p["id"], "name": p["plan"], "is_completed": p["is_completed"]}

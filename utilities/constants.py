@@ -1,5 +1,5 @@
 # import
-from nrm_app.settings import GCS_BUCKET_NAME, GEE_STORAGE_PROJECT, GEE_STORAGE_PROJECT_HELPER
+from nrm_app.settings import GEE_STORAGE_PROJECT, GEE_STORAGE_PROJECT_HELPER
 
 # Directory Path
 ADMIN_BOUNDARY_INPUT_DIR = "data/admin-boundary/input"
@@ -189,11 +189,10 @@ AGROECOLOGICAL_PAN_INDIA_DATASET = (
 GEE_FACILITIES_DATASET_PATH = (
     "projects/corestack-datasets/assets/datasets/pan_india_facilities"
 )
-ANTYODAYA_ANALYSIS = (
+ANTYODAYA_2020 = (
     "data/antyodaya/output/antyodaya_feature_category_values_cluster.csv"
 )
 ANTYODAYA_OUTPUT_DIR = "data/antyodaya/output/tehsil_data"
-ANTYODAYA_CACHE_DIR = "data/antyodaya/output/cache"
 
 GEE_PATHS = {
     "MWS": {
@@ -270,7 +269,7 @@ PAN_INDIA_L3_LULC_CLUSTERS = (
 )
 AEZ = "projects/ext-datasets/assets/datasets/Agro_Ecological_Zones"
 FACILITIES_DATASET_NAME = "Facilities Proximity"
-ANTYODAYA_DATASET_NAME = "Antyodaya Analysis"
+ANTYODAYA_DATASET_NAME = "Antyodaya 2020"
 LCW_PAN_INDIA_DATASET = "projects/ext-datasets/assets/datasets/lcw_conflict_pan_india"
 MINING_PAN_INDIA_DATASET = "projects/ext-datasets/assets/datasets/Mining_data_pan_india"
 FACTORY_PAN_INDIA_DATASET = (
@@ -335,7 +334,7 @@ DROUGHT_ALGORITHM = "MOD09A1-NDVI/NDWI"
 
 # workspace
 FACILITIES_GEOSERVER_WORKSPACE = "facilities_proximity"
-ANTYODAYA_GEOSERVER_WORKSPACE = "antyodaya_analysis"
+ANTYODAYA_GEOSERVER_WORKSPACE = "antyodaya_2020"
 
 # other
 FIRST_COMPUTING_API_PATH = "/api/v1/generate_block_layer/"

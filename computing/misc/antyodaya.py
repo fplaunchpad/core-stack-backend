@@ -54,8 +54,7 @@ from computing.utils import (
 from nrm_app.celery import app
 from utilities.constants import (
     ADMIN_BOUNDARY_INPUT_DIR,
-    ANTYODAYA_ANALYSIS,
-    ANTYODAYA_CACHE_DIR,
+    ANTYODAYA_2020,
     ANTYODAYA_DATASET_NAME,
     ANTYODAYA_GEOSERVER_WORKSPACE,
     ANTYODAYA_OUTPUT_DIR,
@@ -528,7 +527,7 @@ def _ensure_antyodaya_cache(csv_path: Path, cache_dir: Path) -> tuple[Path, list
 
 
 def _read_matching_antyodaya_rows(village_ids: list[str]) -> tuple[pd.DataFrame, list[str], dict]:
-    csv_path = _repo_path(ANTYODAYA_ANALYSIS)
+    csv_path = _repo_path(ANTYODAYA_2020)
     cache_path, selected_columns = _ensure_antyodaya_cache(csv_path, _repo_path(ANTYODAYA_CACHE_DIR))
     metric_columns = selected_columns[1:]
     if not village_ids:
@@ -944,7 +943,7 @@ def generate_antyodaya_layer(
         "db_block": db_block,
         "resolved_block": resolved_block,
         "district_file": district_file.as_posix(),
-        "source_antyodaya_csv": _repo_path(ANTYODAYA_ANALYSIS).as_posix(),
+        "source_antyodaya_csv": _repo_path(ANTYODAYA_2020).as_posix(),
         "layer_name": layer_name,
         "created_at": datetime.utcnow().isoformat() + "Z",
         "admin_read_seconds": admin_read_seconds,
