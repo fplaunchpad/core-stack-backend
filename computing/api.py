@@ -1596,28 +1596,16 @@ def generate_facilities_proximity(request):
 def generate_antyodaya(request):
     print("Inside generate_antyodaya API.")
     try:
-        state = str(request.data.get("state", "")).strip().lower()
-        district = str(request.data.get("district", "")).strip().lower()
-        block = str(request.data.get("block", "")).strip().lower()
-        missing_fields = [
-            field
-            for field, value in {
-                "state": state,
-                "district": district,
-                "block": block,
-            }.items()
-            if not value
-        ]
-        if missing_fields:
-            return Response(
-                {"Exception": f"Missing required fields: {', '.join(missing_fields)}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
+        state = request.data.get("state").lower()
+        district = request.data.get("district").lower()
+        block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        sync_to_gee = _request_bool(request.data.get("sync_to_gee"), default=True)
+        sync_to_gee = _request_bool(
+            request.data.get("sync_to_gee"),
+            default=bool(gee_account_id),
+        )
         sync_to_geoserver = _request_bool(
-            request.data.get("sync_to_geoserver"), default=True
+            request.data.get("sync_to_geoserver"), default=False
         )
         overwrite = _request_bool(request.data.get("overwrite"), default=False)
         make_gee_asset_public = _request_bool(
