@@ -1,8 +1,8 @@
 """
 ZOI NDVI using the ndvi_timeseries compute (HLS-interpolated NDVI).
 
-Does not modify get_ndvi_data / get_ndvi_for_zoi. Accepts the same inputs as
-get_ndvi_data and returns the same FeatureCollection shape (NDVI_<year> JSON properties).
+Uses the fast band-stack + single reduceRegions path (same idea as ndvi_time_series._generate_ndvi),
+while keeping the original NDVI_<year> JSON property output shape.
 """
 
 import ee
@@ -17,6 +17,7 @@ from utilities.gee_utils import (
     get_gee_dir_path,
     check_task_status,
     is_gee_asset_exists,
+    export_vector_asset_to_gee,
 )
 from waterrejuvenation.utils import wait_for_task_completion
 
@@ -46,24 +47,37 @@ def _merge_ndvi_year_assets(chunk_assets):
     return ee.FeatureCollection(chunk_assets[0]).map(merge_features)
 
 
+def _ndvi_bands_to_json_property(feature, year):
+    """Convert toBands reduceRegions output into NDVI_<year> JSON string."""
+
+    props = feature.toDictionary()
+    keys = props.keys().filter(ee.Filter.stringContains("item", "20"))
+
+    def build_dict(k, acc):
+        k = ee.String(k)
+        # toBands prefixes band names with "<index>_" — drop that index
+        new_key = k.split("_").slice(1).join("_")
+        return ee.Dictionary(acc).set(new_key, props.get(k))
+
+    ndvi_dict = ee.Dictionary(keys.iterate(build_dict, ee.Dictionary({})))
+    ndvi_json = ee.String.encodeJSON(ndvi_dict)
+    return feature.set(f"NDVI_{year}", ndvi_json)
+
+
 def build_ndvi_timeseries_from_timeseries_compute(
     suitability_vector,
     start_year,
     end_year,
     description,
     asset_id,
-    ndvi_interval_days=14,
+    ndvi_interval_days=16,
     reducer_scale=30,
+    tile_scale=4,
 ):
     """
-    Drop-in replacement for get_ndvi_data output shape, using ndvi_timeseries NDVI source.
+    Build NDVI time series for ZOI polygons (NDVI_<year> JSON per feature).
 
-    Args:
-        suitability_vector: ee.FeatureCollection with UID (ZOI polygons).
-        start_year, end_year, description, asset_id: Same as get_ndvi_data.
-
-    Returns:
-        ee.FeatureCollection with NDVI_<year> JSON properties (identical to get_ndvi_data).
+    Fast path: one reduceRegions per hydrological year (not per timestep).
     """
     task_ids = []
     asset_ids = []
@@ -82,51 +96,30 @@ def build_ndvi_timeseries_from_timeseries_compute(
             start_date, end_date, suitability_vector.bounds(), ndvi_interval_days
         )
 
-        def map_image(image):
-            date_str = image.date().format("YYYY-MM-dd")
-            reduced = image.reduceRegions(
-                collection=suitability_vector,
-                reducer=ee.Reducer.mean(),
-                scale=reducer_scale,
+        # Stack all dates into one image, then a single reduceRegions (fast)
+        ndvi_stack = ndvi.map(
+            lambda img: img.select("gapfilled_NDVI_lsc").rename(
+                img.date().format("YYYY-MM-dd")
             )
+        ).toBands()
 
-            def annotate(feature):
-                ndvi_val = ee.Algorithms.If(
-                    ee.Algorithms.IsEqual(feature.get("gapfilled_NDVI_lsc"), None),
-                    -9999,
-                    feature.get("gapfilled_NDVI_lsc"),
-                )
-                return feature.set("ndvi_date", date_str).set("ndvi", ndvi_val)
+        reduced = ndvi_stack.reduceRegions(
+            collection=suitability_vector,
+            reducer=ee.Reducer.mean(),
+            scale=reducer_scale,
+            tileScale=tile_scale,
+        )
 
-            return reduced.map(annotate)
-
-        all_ndvi = ndvi.map(map_image).flatten()
-        uids = suitability_vector.aggregate_array("UID")
-
-        def build_feature(uid):
-            feature_geom = ee.Feature(
-                suitability_vector.filter(ee.Filter.eq("UID", uid)).first()
-            )
-            filtered = all_ndvi.filter(ee.Filter.eq("UID", uid))
-            date_ndvi_list = filtered.aggregate_array("ndvi_date").zip(
-                filtered.aggregate_array("ndvi")
-            )
-            ndvi_dict = ee.Dictionary(date_ndvi_list.flatten())
-            ndvi_json = ee.String.encodeJSON(ndvi_dict)
-            return feature_geom.set(f"NDVI_{year}", ndvi_json)
-
-        merged_fc = ee.FeatureCollection(uids.map(build_feature))
+        merged_fc = reduced.map(lambda f: _ndvi_bands_to_json_property(f, year))
 
         try:
-            task = ee.batch.Export.table.toAsset(
-                collection=merged_fc,
-                description=ndvi_description,
-                assetId=ndvi_asset_id,
+            task_id = export_vector_asset_to_gee(
+                merged_fc, ndvi_description, ndvi_asset_id
             )
-            task.start()
-            print(f"Started export for {year}")
-            asset_ids.append(ndvi_asset_id)
-            task_ids.append(task.status()["id"])
+            if task_id:
+                print(f"Started export for {year}")
+                asset_ids.append(ndvi_asset_id)
+                task_ids.append(task_id)
         except Exception as e:
             print("Export error:", e)
 
@@ -155,7 +148,7 @@ def get_ndvi_for_zoi_from_timeseries_compute(
     Same orchestration and result as get_ndvi_for_zoi (zoi3), but NDVI values come from
     the ndvi_timeseries compute (get_padded_ndvi_ts_image) instead of get_ndvi_data.
     """
-    print("started generating ndvi for zoi (timeseries compute)")
+    print("started generating ndvi for zoi (timeseries compute, fast reduce)")
     ee_initialize(gee_account_id)
 
     description_zoi = "cropping_intensity_zoi_" + asset_suffix
