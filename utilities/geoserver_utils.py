@@ -1,6 +1,9 @@
 # inbuilt libraries
+from datetime import datetime
+import html
 import io
 import os
+import re
 from typing import List, Optional, Set
 
 # third-party libraries
@@ -42,6 +45,109 @@ def ensure_workspace(geo, workspace: str) -> None:
         if exc.status != 404:
             raise
         geo.create_workspace(workspace)
+
+
+def _strip_html(value: str) -> str:
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = html.unescape(value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _summarize_external_error(exc: Exception, max_chars: int = 500) -> str:
+    text = str(exc).replace("\\n", "\n")
+    status_match = re.search(r"Status\s*:\s*(\d+)", text)
+    message_match = re.search(r"<p><b>Message</b>\s*(.*?)</p>", text, re.S)
+    root_match = re.search(
+        r"<p><b>Root Cause</b></p><pre>(.*?)(?:\n|</pre>)", text, re.S
+    )
+
+    parts = []
+    if status_match:
+        parts.append(f"status={status_match.group(1)}")
+    if message_match:
+        parts.append(f"message={_strip_html(message_match.group(1))}")
+    if root_match:
+        parts.append(f"root_cause={_strip_html(root_match.group(1))}")
+    if not parts:
+        parts.append(_strip_html(text))
+    return "; ".join(parts)[:max_chars]
+
+
+def upload_file_to_geoserver(
+    file_path: str,
+    layer_name: str | None = None,
+    workspace: str | None = None,
+    overwrite: bool = False,
+    *,
+    geo: "Geoserver | None" = None,
+    file_extension: str | None = None,
+):
+    """
+    Upload a local geospatial file to GeoServer.
+
+    Supported paths currently include vector datastores such as GPKG, SHP/ZIP,
+    GeoJSON/JSON/JSONL/NDJSON, and SLD/XML style files. Errors are converted
+    into a compact response dictionary so callers can continue after local
+    output succeeds and report exactly what external setup is missing.
+    """
+    geo = geo or Geoserver()
+    path = str(file_path)
+    workspace = workspace or "default"
+    extension = (file_extension or os.path.splitext(path)[1].lstrip(".")).lower()
+    layer_name = layer_name or os.path.splitext(os.path.basename(path))[0]
+
+    try:
+        ensure_workspace(geo, workspace)
+        if extension in {"sld", "xml"}:
+            response = geo.upload_style(path=path, name=layer_name, workspace=workspace)
+            return {"ok": True, "response": response, "workspace": workspace}
+
+        response = geo.create_shp_datastore(
+            path=path,
+            store_name=layer_name,
+            workspace=workspace,
+            file_extension=extension,
+        )
+        return {"ok": True, "response": response}
+    except Exception as exc:
+        if overwrite and extension not in {"sld", "xml"}:
+            try:
+                geo.delete_vector_store(
+                    workspace=workspace,
+                    store=layer_name,
+                )
+                response = geo.create_shp_datastore(
+                    path=path,
+                    store_name=layer_name,
+                    workspace=workspace,
+                    file_extension=extension,
+                )
+                return {"ok": True, "response": response, "recreated_store": True}
+            except Exception as retry_exc:
+                exc = retry_exc
+
+        error = {
+            "ok": False,
+            "error_type": exc.__class__.__name__,
+            "error": _summarize_external_error(exc),
+        }
+        print(f"[{datetime.now()}] GeoServer publish failed: {error['error']}")
+        return error
+
+
+def _publish_to_geoserver(
+    gpkg_base_path: str,
+    layer_name: str,
+    overwrite: bool = False,
+    *,
+    workspace: str = "default",
+):
+    return upload_file_to_geoserver(
+        f"{gpkg_base_path}.gpkg",
+        layer_name=layer_name,
+        workspace=workspace,
+        overwrite=overwrite,
+    )
 
 
 # call back class for reading the data
@@ -1794,6 +1900,11 @@ class Geoserver:
         content_type_by_extension = {
             "gpkg": "application/geopackage+sqlite3",
             "geopkg": "application/geopackage+sqlite3",
+            "geojson": "application/geo+json",
+            "json": "application/geo+json",
+            "jsonl": "application/json",
+            "ndjson": "application/json",
+            "zip": "application/zip",
             "shp": "application/zip",
         }
         headers = {
