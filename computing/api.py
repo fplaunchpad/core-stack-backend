@@ -118,6 +118,41 @@ def _tehsil_suffix(district, block):
     return layer_assets.tehsil_suffix(district, block)
 
 
+def _get_request_value(data, *keys):
+    """Read first non-empty value from request body (supports aliases and form lists)."""
+    for key in keys:
+        val = data.get(key)
+        if val is None:
+            continue
+        if isinstance(val, (list, tuple)):
+            val = val[0] if val else None
+        if val is not None and str(val).strip() != "":
+            return str(val).strip()
+    return None
+
+
+def _parse_zoi_request_dates(request):
+    """
+    Resolve ZOI date window from API body.
+    Accepts start_date/end_date (YYYY-MM-DD) or start_year/end_year (hydrological years).
+    """
+    data = request.data
+    start_date = _get_request_value(
+        data, "start_date", "startDate", "Start_Date", "START_DATE"
+    )
+    end_date = _get_request_value(data, "end_date", "endDate", "End_Date", "END_DATE")
+
+    start_year = _get_request_value(data, "start_year", "startYear", "Start_Year")
+    end_year = _get_request_value(data, "end_year", "endYear", "End_Year")
+
+    if not start_date and start_year is not None:
+        start_date = f"{int(start_year)}-07-01"
+    if not end_date and end_year is not None:
+        end_date = f"{int(end_year) + 1}-06-30"
+
+    return start_date, end_date
+
+
 def _task_started_response(message, task=None, asset_id=None, asset_ids=None):
     payload = {
         "status": "initiated",
@@ -126,14 +161,13 @@ def _task_started_response(message, task=None, asset_id=None, asset_ids=None):
     }
     if task is not None and getattr(task, "id", None):
         payload["task_id"] = task.id
-    if asset_id is not None:
-        payload["asset_id"] = asset_id
+    resolved = layer_assets.resolve_asset_id_field(asset_id=asset_id, asset_ids=asset_ids)
+    if resolved is not None:
+        payload["asset_id"] = resolved
     if asset_ids is not None:
         payload["asset_ids"] = asset_ids
-        if asset_id is None and len(asset_ids) == 1:
-            payload["asset_id"] = asset_ids[0]
-        elif asset_id is None and asset_ids:
-            payload["asset_id"] = asset_ids[0]
+    elif isinstance(asset_id, list):
+        payload["asset_ids"] = asset_id
     return Response(payload, status=status.HTTP_200_OK)
 
 
@@ -376,27 +410,28 @@ def lulc_for_tehsil(request):
         end_year = request.data.get("end_year")
         gee_account_id = request.data.get("gee_account_id")
         version = request.data.get("version")
+        start_year = int(start_year)
         end_year = int(end_year)
         if version == "v2":
             task = generate_lulc_v2_tehsil.apply_async(
                 args=[state, district, block, start_year, end_year, gee_account_id],
                 queue="nrm",
             )
-            asset_id = layer_assets.lulc_tehsil_asset_id(
-                state, district, block, end_year, version="v2"
+            asset_ids = layer_assets.lulc_tehsil_asset_ids(
+                state, district, block, start_year, end_year, version="v2"
             )
             return _task_started_response(
-                "generate_lulc_v2_tehsil task initiated", task=task, asset_id=asset_id
+                "generate_lulc_v2_tehsil task initiated", task=task, asset_ids=asset_ids
             )
         task = generate_lulc_v3_tehsil.apply_async(
             args=[state, district, block, start_year, end_year, gee_account_id],
             queue="nrm",
         )
-        asset_id = layer_assets.lulc_tehsil_asset_id(
-            state, district, block, end_year, version="v3"
+        asset_ids = layer_assets.lulc_tehsil_asset_ids(
+            state, district, block, start_year, end_year, version="v3"
         )
         return _task_started_response(
-            "generate_lulc_v3_tehsil task initiated", task=task, asset_id=asset_id
+            "generate_lulc_v3_tehsil task initiated", task=task, asset_ids=asset_ids
         )
     except Exception as e:
         return layer_api_error_response("lulc_for_tehsil", e, request=request)
@@ -466,7 +501,10 @@ def lulc_v3(request):
         start_year = int(request.data.get("start_year"))
         end_year = int(request.data.get("end_year"))
         gee_account_id = request.data.get("gee_account_id")
-        asset_id = _build_lulc_v3_asset_id(state, district, block, end_year)
+        asset_ids = layer_assets.lulc_v3_clip_asset_ids(
+            state, district, block, start_year, end_year
+        )
+        asset_id = layer_assets.resolve_asset_id_field(asset_ids=asset_ids)
 
         if bool(getattr(settings, "LAYER_GENERATION_SYNC_MODE", False)):
             task_result = clip_lulc_v3.apply(
@@ -486,7 +524,9 @@ def lulc_v3(request):
             args=[state, district, block, start_year, end_year, gee_account_id],
             queue="nrm",
         )
-        return _task_started_response("LULC v3 task initiated", task=task, asset_id=asset_id)
+        return _task_started_response(
+            "LULC v3 task initiated", task=task, asset_ids=asset_ids
+        )
     except Exception as e:
         return layer_api_error_response("lulc_v3", e, request=request)
 
@@ -574,12 +614,11 @@ def generate_ci_layer(request):
             },
             queue="nrm",
         )
-        asset_suffix = valid_gee_text(district.lower()) + "_" + valid_gee_text(block.lower())
-        asset_id = _build_mws_asset_id(
-            state, district, block, "cropping_intensity_" + asset_suffix
+        asset_ids = layer_assets.cropping_intensity_asset_ids(
+            state, district, block, int(start_year), int(end_year)
         )
         return _task_started_response(
-            "Cropping Intensity task initiated", task=task, asset_id=asset_id
+            "Cropping Intensity task initiated", task=task, asset_ids=asset_ids
         )
     except Exception as e:
         return layer_api_error_response("generate_ci_layer", e, request=request)
@@ -632,14 +671,8 @@ def generate_swb(request):
                 "gee_account_id": gee_account_id,
             }
         )
-        asset_suffix = valid_gee_text(district) + "_" + valid_gee_text(block)
-        expected_asset_id = (
-            get_gee_dir_path(
-                [state, district, block], asset_path=GEE_PATHS["MWS"]["GEE_ASSET_PATH"]
-            )
-            + "swb3_"
-            + asset_suffix
-        )
+        asset_ids = layer_assets.swb_pipeline_asset_ids(state, district, block)
+        asset_id = layer_assets.resolve_asset_id_field(asset_ids=asset_ids)
         if task_result.failed():
             return Response(
                 {"error": str(task_result.result)},
@@ -647,11 +680,11 @@ def generate_swb(request):
             )
         if not task_result.result:
             return Response(
-                {"error": "SWB generation failed", "asset_id": expected_asset_id},
+                {"error": "SWB generation failed", "asset_id": asset_id},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
         return Response(
-            {"Success": "Generate swb completed", "asset_id": expected_asset_id},
+            {"Success": "Generate swb completed", "asset_id": asset_id},
             status=status.HTTP_200_OK,
         )
     except Exception as e:
@@ -680,10 +713,11 @@ def generate_drought_layer(request):
             },
             queue="nrm",
         )
-        asset_suffix = valid_gee_text(district.lower()) + "_" + valid_gee_text(block.lower())
-        asset_id = _build_mws_asset_id(state, district, block, "drought_" + asset_suffix)
+        asset_ids = layer_assets.drought_layer_asset_ids(
+            state, district, block, int(start_year), int(end_year)
+        )
         return _task_started_response(
-            "generate_drought_layer task initiated", task=task, asset_id=asset_id
+            "generate_drought_layer task initiated", task=task, asset_ids=asset_ids
         )
     except Exception as e:
         return layer_api_error_response("generate_drought_layer", e, request=request)
@@ -1400,10 +1434,17 @@ def generate_layer_in_order(request):
             layer_assets.mws_filtered_asset_id(state, district, block),
             layer_assets.admin_boundary_asset_id(state, district, block),
         ]
-        if end_year is not None:
+        if start_year is not None and end_year is not None:
+            asset_ids.extend(
+                layer_assets.lulc_v3_clip_asset_ids(
+                    state, district, block, int(start_year), int(end_year)
+                )
+            )
+        elif end_year is not None:
             asset_ids.append(
                 layer_assets.lulc_v3_asset_id(state, district, block, int(end_year))
             )
+        asset_ids = list(dict.fromkeys(asset_ids))
         return _task_started_response(
             "Successfully initiated",
             task=task,
@@ -1637,8 +1678,8 @@ def generate_ndvi_timeseries(request):
         state = request.data.get("state").lower()
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
-        start_year = request.data.get("start_year")
-        end_year = request.data.get("end_year")
+        start_year = int(request.data.get("start_year") or 2017)
+        end_year = int(request.data.get("end_year") or 2024)
         gee_account_id = request.data.get("gee_account_id")
         mws_count = request.data.get("mws_count") or 150
         chunk_size = request.data.get("chunk_size") or 100
@@ -1656,10 +1697,13 @@ def generate_ndvi_timeseries(request):
             },
             queue="nrm",
         )
-        asset_suffix = valid_gee_text(district.lower()) + "_" + valid_gee_text(block.lower())
-        asset_id = _build_mws_asset_id(state, district, block, "ndvi_timeseries_" + asset_suffix)
+        asset_ids = layer_assets.ndvi_timeseries_asset_ids(
+            state, district, block, int(start_year), int(end_year)
+        )
         return _task_started_response(
-            "Successfully initiated generate_ndvi_timeseries", task=task, asset_id=asset_id
+            "Successfully initiated generate_ndvi_timeseries",
+            task=task,
+            asset_ids=asset_ids,
         )
     except Exception as e:
         return layer_api_error_response("generate_ndvi_timeseries", e, request=request)
@@ -1674,12 +1718,14 @@ def generate_zoi_to_gee(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        start_date = request.data.get("start_date")
-        end_date = request.data.get("end_date")
+        start_date, end_date = _parse_zoi_request_dates(request)
 
         if bool(start_date) ^ bool(end_date):
             return Response(
-                {"error": "Pass both start_date and end_date together in YYYY-MM-DD format."},
+                {
+                    "error": "Pass both start_date and end_date together (YYYY-MM-DD), "
+                    "or both start_year and end_year."
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if start_date and end_date:
@@ -1692,6 +1738,8 @@ def generate_zoi_to_gee(request):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        print(f"generate_zoi_to_gee dates: start_date={start_date}, end_date={end_date}")
+
         task = generate_zoi.apply_async(
             kwargs={
                 "state": state,
@@ -1703,10 +1751,15 @@ def generate_zoi_to_gee(request):
             },
             queue="waterbody",
         )
-        asset_id = get_gee_dir_path(
-            [state, district, block], asset_path=GEE_PATHS["WATERBODY"]["GEE_ASSET_PATH"]
-        ) + _tehsil_suffix(district, block)
-        return _task_started_response("Successfully initiated", task=task, asset_id=asset_id)
+        zoi_start_year, zoi_end_year = layer_assets.hydrological_years_from_date_window(
+            start_date, end_date
+        )
+        asset_ids = layer_assets.zoi_pipeline_asset_ids(
+            state, district, block, zoi_start_year, zoi_end_year
+        )
+        return _task_started_response(
+            "Successfully initiated", task=task, asset_ids=asset_ids
+        )
     except Exception as e:
         return layer_api_error_response("generate_zoi_to_gee", e, request=request)
 
