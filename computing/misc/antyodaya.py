@@ -42,7 +42,7 @@ from utilities.constants import (
     ANTYODAYA_GEOSERVER_WORKSPACE,
     ANTYODAYA_OUTPUT_DIR,
 )
-from utilities.gee_utils import _publish_to_gee, _write_gee_upload_csv
+from utilities.gee_utils import _publish_to_gee
 from utilities.geoserver_utils import upload_file_to_geoserver
 from utilities.scripts.admin_utils import (
     ADMIN_COLUMNS,
@@ -52,6 +52,7 @@ from utilities.scripts.admin_utils import (
     _find_district_file,
     _find_state_dir,
     _first_non_empty,
+    _is_valid_admin_text,
     _read_admin_unique_values,
     _validate_output_gdf,
     get_clean_admin_block_gdf,
@@ -105,7 +106,7 @@ def list_antyodaya_blocks(state, district, admin_input_dir=ADMIN_BOUNDARY_INPUT_
     return sorted(
         str(value).strip()
         for value in _read_admin_unique_values(district_file, "TEHSIL")
-        if str(value).strip()
+        if _is_valid_admin_text(value)
     )
 
 
@@ -305,10 +306,10 @@ def _write_local_outputs(gdf: gpd.GeoDataFrame, output_dir: Path, layer_name: st
     output_dir.mkdir(parents=True, exist_ok=True)
     gpkg_base = output_dir / layer_name
     gpkg_path = gpkg_base.with_suffix(".gpkg")
-    csv_path = output_dir / f"{layer_name}_gee_upload.csv"
+    legacy_gee_csv_path = output_dir / f"{layer_name}_gee_upload.csv"
     legacy_metadata_path = output_dir / f"{layer_name}_metadata.json"
 
-    for path in (gpkg_path, csv_path, legacy_metadata_path):
+    for path in (gpkg_path, legacy_gee_csv_path, legacy_metadata_path):
         if path.exists():
             path.unlink()
 
@@ -317,12 +318,10 @@ def _write_local_outputs(gdf: gpd.GeoDataFrame, output_dir: Path, layer_name: st
         pyogrio.write_dataframe(gdf, gpkg_path, layer=layer_name, driver="GPKG")
     else:
         gdf.to_file(gpkg_path, layer=layer_name, driver="GPKG")
-    _write_gee_upload_csv(gdf, csv_path)
 
     return {
         "gpkg_base_path": gpkg_base.as_posix(),
         "gpkg_path": gpkg_path.as_posix(),
-        "gee_csv_path": csv_path.as_posix(),
     }
 
 
@@ -382,7 +381,7 @@ def _publish_local_outputs(
             gee_started = time.perf_counter()
             try:
                 asset_id, gee_task_id, gee_made_public = _publish_to_gee(
-                    paths["gee_csv_path"],
+                    paths["gpkg_path"],
                     state_slug,
                     district_slug,
                     block_slug,
