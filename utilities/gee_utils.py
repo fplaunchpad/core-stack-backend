@@ -79,6 +79,16 @@ class GEEInitializationError(RuntimeError):
 
 GEE_UPLOAD_CSV_DELIMITER = "\t"
 GEE_UPLOAD_CSV_QUALIFIER = '"'
+GEE_VECTOR_UPLOAD_SUFFIXES = {
+    ".gpkg",
+    ".geopkg",
+    ".geojson",
+    ".json",
+    ".jsonl",
+    ".ndjson",
+    ".shp",
+    ".zip",
+}
 
 
 def _normalize_location(value: Any) -> str:
@@ -166,6 +176,50 @@ def _write_gee_upload_csv(gdf: Any, csv_path: Path) -> None:
         quotechar=GEE_UPLOAD_CSV_QUALIFIER,
         quoting=csv.QUOTE_ALL,
     )
+
+
+def _read_local_vector_for_gee(file_path: str | Path) -> Any:
+    file_path = Path(file_path)
+    try:
+        import pyogrio
+
+        gdf = pyogrio.read_dataframe(file_path)
+    except ImportError:
+        import geopandas as gpd
+
+        gdf = gpd.read_file(file_path)
+
+    if "geometry" not in gdf.columns:
+        raise ValueError(f"GEE vector upload requires a geometry column: {file_path}")
+    if gdf.crs is None:
+        gdf = gdf.set_crs("EPSG:4326")
+    elif gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs("EPSG:4326")
+    return gdf
+
+
+def _prepare_gee_upload_csv(
+    file_path: str | Path,
+    layer_name: str,
+    temp_dir: str | Path,
+) -> Path:
+    """
+    Return a CSV path suitable for GEE table manifest upload.
+
+    Existing CSV inputs are used directly. Vector inputs are converted to a
+    temporary CSV with a manifest-compatible ``geometry`` column; callers own
+    the temporary directory lifecycle.
+    """
+    file_path = Path(file_path)
+    suffix = file_path.suffix.lower()
+    if suffix == ".csv":
+        return file_path
+    if suffix not in GEE_VECTOR_UPLOAD_SUFFIXES:
+        raise ValueError(f"GEE local upload does not yet support {suffix or 'unknown'} files")
+
+    csv_path = Path(temp_dir) / f"{layer_name}_gee_upload.csv"
+    _write_gee_upload_csv(_read_local_vector_for_gee(file_path), csv_path)
+    return csv_path
 
 
 def _check_asset_health(asset_id: str) -> dict[str, Any]:
@@ -319,6 +373,22 @@ def _publish_to_gee(
             destination_prefix=destination_prefix,
             asset_properties=asset_properties,
         )
+    if suffix in GEE_VECTOR_UPLOAD_SUFFIXES:
+        with tempfile.TemporaryDirectory(prefix="gee_upload_") as temp_dir:
+            csv_path = _prepare_gee_upload_csv(file_path, layer_name, temp_dir)
+            return _inject_csv_to_gee(
+                csv_path=csv_path.as_posix(),
+                state=state,
+                district=district,
+                block=block,
+                layer_name=layer_name,
+                gee_account_id=gee_account_id,
+                overwrite=overwrite,
+                make_public=make_public,
+                asset_base_path=asset_base_path,
+                destination_prefix=destination_prefix,
+                asset_properties=asset_properties,
+            )
     raise ValueError(f"GEE local upload does not yet support {suffix or 'unknown'} files")
 
 
