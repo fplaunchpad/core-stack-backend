@@ -532,6 +532,29 @@ def is_gee_asset_exists(path, log=True):
     return flag
 
 
+def ensure_gee_folder_path(folder_path: str, sleep_seconds: float = 1.0) -> None:
+    """
+    Create a nested Earth Engine folder path if any folder is missing.
+
+    Use this for local-to-GEE upload pipelines that need to stage a finished
+    local output under a predictable asset path. Folder assets count toward the
+    same Earth Engine asset quota as table/raster assets, so callers should run
+    bucket and quota preflights before creating new folders in large batches.
+    """
+    normalized = str(folder_path).strip().rstrip("/")
+    if not normalized.startswith("projects/") or "/assets" not in normalized:
+        raise ValueError(f"Invalid Earth Engine folder path: {folder_path}")
+
+    prefix, suffix = normalized.split("/assets", 1)
+    current = f"{prefix}/assets"
+    for part in [segment for segment in suffix.split("/") if segment]:
+        current = f"{current}/{part}"
+        if is_gee_asset_exists(current, log=False):
+            continue
+        ee.data.createAsset({"type": "FOLDER"}, current)
+        time.sleep(sleep_seconds)
+
+
 def move_asset_to_another_folder(src_folder, dest_folder):
     ee_initialize()
     # folder from where to copy

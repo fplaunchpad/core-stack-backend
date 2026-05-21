@@ -28,6 +28,22 @@ class GeoserverException(Exception):
         super().__init__(f"Status : {self.status} - {self.message}")
 
 
+def ensure_workspace(geo, workspace: str) -> None:
+    """
+    Ensure a GeoServer workspace exists before a datastore upload.
+
+    Older GeoServer deployments can report a generic 500 while uploading a store
+    into a missing workspace. Centralising this check lets local-output pipelines
+    fail clearly and reuse the same create-if-missing behavior.
+    """
+    try:
+        geo.get_workspace(workspace)
+    except GeoserverException as exc:
+        if exc.status != 404:
+            raise
+        geo.create_workspace(workspace)
+
+
 # call back class for reading the data
 class DataProvider:
     def __init__(self, data):
