@@ -1,6 +1,8 @@
 from computing.zoi_layers.zoi1 import generate_zoi1
 from computing.zoi_layers.zoi2 import generate_zoi_ci
-from computing.zoi_layers.zoi3 import get_ndvi_for_zoi
+from computing.zoi_layers.zoi_ndvi_from_timeseries import (
+    get_ndvi_for_zoi_from_timeseries_compute,
+)
 from projects.models import Project
 from utilities.gee_utils import ee_initialize, valid_gee_text, check_task_status
 from waterrejuvenation.utils import wait_for_task_completion, delete_asset_on_GEE
@@ -56,7 +58,7 @@ def generate_zoi(
 
     if proj_id:
 
-        get_ndvi_for_zoi(
+        get_ndvi_for_zoi_from_timeseries_compute(
             state=state,
             district=district,
             block=block,
