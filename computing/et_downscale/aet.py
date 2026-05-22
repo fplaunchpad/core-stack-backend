@@ -6,51 +6,75 @@ from computing.et_downscale.helper import (
     finalize_export_image,
     MONTH_ABBR,
     export_product_asset,
-    wait_for_tasks,
     fill_monthly_collection,
     monthly_collection_to_stack,
-    make_raw_monthly,
 )
 
 
+# ---------------------------------------------------------------------------
+# CONSTANTS - AET pipeline
+# ---------------------------------------------------------------------------
+FEATURE_BANDS = [
+    "MSAVI",
+    "NDMI",
+    "NDVI",
+    "NDWI",
+    "SAVI",
+    "NDBI",
+    "NDIIB7",
+    "Albedo",
+    "LST",
+    "Rainf_tavg",
+    "RootMoist_inst",
+    "SoilMoi0_10cm_inst",
+    "CanopInt_inst",
+    "AvgSurfT_inst",
+    "Qair_f_inst",
+    "Wind_f_inst",
+    "Psurf_f_inst",
+    "SoilTMP0_10cm_inst",
+    "Qsb_acc",
+    "Swnet_tavg",
+    "Lwnet_tavg",
+    "Qg_tavg",
+    "Qh_tavg",
+    "Qle_tavg",
+    "SWdown_f_tavg",
+    "Tair_f_inst",
+]
 # =============================================================================
 # CORE LAYER 1 - AET
 # =============================================================================
 
 
-def run_aet(cfg: dict, region: ee.Geometry, aet_stack=None) -> str:
+def generate_aet(cfg, region):
     """
     Monthly mean daily AET for every 30 m pixel.
-    Output  : aet_<tehsil>_<year> GEE asset (13 bands)
+    Output  : aet_<asset_suffix>_<year> GEE asset (13 bands)
     """
-    tehsil = cfg["tehsil_name"]
     year = cfg["year"]
+    asset_suffix = cfg["asset_suffix"]
 
-    print(f"\n{'=' * 60}")
-    print(f"  [aet]  {tehsil}  |  {year}")
-    print(f"{'=' * 60}")
-
-    if aet_stack is None:
-        print("  Building AET stack ...")
-        classifier = build_classifier(cfg["model_aez"])
-        aet_stack = build_aet_stack(region, classifier, year)
+    classifier = build_classifier(cfg["model_aez"])
+    aet_stack = build_aet_stack(region, classifier, year)
 
     grid_proj = aet_stack.select("ET_01").projection()
     common_mask = build_common_pixel_mask(region, grid_proj)
+    footprint = aet_stack.select("ET_01").mask()
+
     aet_monthly = aet_stack.multiply(0.1)
-    footprint = aet_monthly.select("ET_01").mask()
-    aet_annual_total = ee_annual_total_band(
+    aet_annual = ee_annual_total_band(
         aet_monthly, "ET", year, band_name="ET_annual"
     ).updateMask(footprint)
-    image = finalize_export_image(
+    aet_image = finalize_export_image(
         aet_monthly,
-        aet_annual_total,
+        aet_annual,
         region,
         metadata={
             "application": "aet",
             "units": "bands 1-12: mm/day; band 13: mm/yr",
             "year": str(year),
-            "tehsil": tehsil,
+            "asset_suffix": asset_suffix,
             "roi_path": cfg["roi_path"],
             "model_aez": cfg["model_aez"],
             "description": "Bands 1-12: mean daily AET per month at 30 m; band 13: annual total AET",
@@ -60,10 +84,8 @@ def run_aet(cfg: dict, region: ee.Geometry, aet_stack=None) -> str:
         default_proj=grid_proj,
         common_mask=common_mask,
     )
-    task_spec = export_product_asset("aet", "AET", image, cfg)
-    if cfg.get("wait_exports", True):
-        wait_for_tasks([task_spec], cfg.get("poll_seconds", 30))
-    return task_spec["asset_id"]
+    spec = export_product_asset("aet", "AET", aet_image, cfg)
+    return aet_stack, common_mask, footprint, grid_proj, spec
 
 
 def build_aet_stack(
@@ -85,3 +107,67 @@ def build_aet_stack(
     interp_col = fill_monthly_collection(raw_monthly, "ET_daily", fallback_value=0)
     stack = monthly_collection_to_stack(interp_col, "ET_daily", "ET_", region)
     return stack
+
+
+def calc_landsat_indices(img: ee.Image) -> ee.Image:
+    ndvi = img.normalizedDifference(["SR_B5", "SR_B4"]).rename("NDVI")
+    savi = img.expression(
+        "((NIR-R)/(NIR+R+0.5))*1.5",
+        {"NIR": img.select("SR_B5"), "R": img.select("SR_B4")},
+    ).rename("SAVI")
+    msavi = img.expression(
+        "(2*NIR+1-sqrt(pow((2*NIR+1),2)-8*(NIR-R)))/2",
+        {"NIR": img.select("SR_B5"), "R": img.select("SR_B4")},
+    ).rename("MSAVI")
+    ndbi = img.normalizedDifference(["SR_B6", "SR_B5"]).rename("NDBI")
+    ndwi = img.normalizedDifference(["SR_B3", "SR_B5"]).rename("NDWI")
+    ndmi = img.normalizedDifference(["SR_B5", "SR_B6"]).rename("NDMI")
+    ndiib7 = img.normalizedDifference(["SR_B5", "SR_B7"]).rename("NDIIB7")
+    albedo = img.expression(
+        "((0.356*B1)+(0.130*B2)+(0.373*B3)+(0.085*B4)+(0.072*B5)-0.018)/1.016",
+        {
+            "B1": img.select("SR_B1"),
+            "B2": img.select("SR_B2"),
+            "B3": img.select("SR_B3"),
+            "B4": img.select("SR_B4"),
+            "B5": img.select("SR_B5"),
+        },
+    ).rename("Albedo")
+    lst = img.select("ST_B10").multiply(0.00341802).add(149.0).rename("LST")
+    return img.addBands([ndvi, savi, msavi, ndbi, ndwi, ndmi, ndiib7, albedo, lst])
+
+
+def predict_daily_et(
+    ls_img: ee.Image, region: ee.Geometry, classifier: ee.Classifier
+) -> ee.Image:
+    idx = calc_landsat_indices(ls_img)
+    clim = (
+        ee.ImageCollection("NASA/GLDAS/V021/NOAH/G025/T3H")
+        .filterBounds(region)
+        .filterDate(
+            ls_img.date().advance(-12, "hour"), ls_img.date().advance(12, "hour")
+        )
+        .mean()
+        .resample("bilinear")
+        .reproject(crs=ls_img.select("SR_B5").projection(), scale=30)
+    )
+    return (
+        idx.addBands(clim)
+        .select(FEATURE_BANDS)
+        .classify(classifier)
+        .rename("ET_daily")
+        .set("system:time_start", ls_img.date().millis())
+    )
+
+
+def make_raw_monthly(month, ls_col, region, classifier, year):
+    start = ee.Date.fromYMD(year, month, 1)
+    end = start.advance(1, "month")
+    mid = start.advance(15, "day").millis()
+    monthly_collection = ls_col.filterDate(start, end)
+    et = (
+        monthly_collection.map(lambda img: predict_daily_et(img, region, classifier))
+        .mean()
+        .rename("ET_daily")
+    )
+    return et.set("month", month).set("system:time_start", mid)

@@ -233,4 +233,9 @@ urlpatterns = [
         api.generate_canal_vector,
         name="generate-canal-vector",
     ),
+    path(
+        "generate_et_downscale/",
+        api.et_downscale,
+        name="et_downscale",
+    ),
 ]

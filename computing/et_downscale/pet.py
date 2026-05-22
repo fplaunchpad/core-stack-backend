@@ -9,43 +9,38 @@ from computing.et_downscale.helper import (
     ee_annual_total_band,
     finalize_export_image,
     export_product_asset,
-    wait_for_tasks,
     MONTH_ABBR,
     fill_monthly_collection,
     monthly_collection_to_stack,
 )
 
 
-def run_pet(cfg: dict, region: ee.Geometry, aet_stack=None, pet_stack=None) -> str:
-    """
-    Monthly mean daily PET (MODIS MOD16A2) for every 30 m pixel.
-    Output  : pet_<tehsil>_<year> GEE asset (13 bands)
-    """
-    tehsil = cfg["tehsil_name"]
+def generate_pet(
+    cfg,
+    region,
+    common_mask=None,
+    footprint=None,
+    grid_proj=None,
+):
     year = cfg["year"]
 
-    print(f"\n{'=' * 60}")
-    print(f"  [pet]  {tehsil}  |  {year}")
-    print(f"{'=' * 60}")
-
-    if aet_stack is None:
+    if footprint is None:
         print("  Building AET stack (pixel-grid carrier) ...")
         classifier = build_classifier(cfg["model_aez"])
         aet_stack = build_aet_stack(region, classifier, year)
 
-    if pet_stack is None:
-        print("  Building PET stack (MODIS MOD16A2) ...")
-        proj = get_proj_30m(region, year)
-        pet_stack = build_pet_stack(region, year, MODIS_COL, proj)
+        grid_proj = aet_stack.select("ET_01").projection()
+        common_mask = build_common_pixel_mask(region, grid_proj)
+        footprint = aet_stack.select("ET_01").mask()
 
-    grid_proj = aet_stack.select("ET_01").projection()
-    common_mask = build_common_pixel_mask(region, grid_proj)
-    footprint = aet_stack.select("ET_01").mask()
+    proj = get_proj_30m(region, year)
+    pet_stack = build_pet_stack(region, year, MODIS_COL, proj)
+
     pet_monthly = pet_stack.multiply(0.1).updateMask(footprint)
     pet_annual = ee_annual_total_band(
         pet_monthly, "PET", year, band_name="PET_annual"
     ).updateMask(footprint)
-    image = finalize_export_image(
+    pet_image = finalize_export_image(
         pet_monthly,
         pet_annual,
         region,
@@ -55,7 +50,7 @@ def run_pet(cfg: dict, region: ee.Geometry, aet_stack=None, pet_stack=None) -> s
             "source": "MODIS MOD16A2",
             "modis_collection": MODIS_COL,
             "year": str(year),
-            "tehsil": tehsil,
+            "asset_suffix": cfg["asset_suffix"],
             "roi_path": cfg["roi_path"],
             "description": "Bands 1-12: mean daily PET per month at 30 m; band 13: annual total PET",
         },
@@ -64,10 +59,8 @@ def run_pet(cfg: dict, region: ee.Geometry, aet_stack=None, pet_stack=None) -> s
         default_proj=grid_proj,
         common_mask=common_mask,
     )
-    task_spec = export_product_asset("pet", "PET", image, cfg)
-    if cfg.get("wait_exports", True):
-        wait_for_tasks([task_spec], cfg.get("poll_seconds", 30))
-    return task_spec["asset_id"]
+    spec = export_product_asset("pet", "PET", pet_image, cfg)
+    return pet_stack, proj, spec
 
 
 def _make_raw_monthly_pet(month, modis_col, year, proj):
@@ -104,3 +97,7 @@ def build_pet_stack(
     interp_col = fill_monthly_collection(raw_monthly, "PET_daily", fallback_value=0)
     stack = monthly_collection_to_stack(interp_col, "PET_daily", "PET_", region)
     return stack
+
+
+def aman():
+    pass

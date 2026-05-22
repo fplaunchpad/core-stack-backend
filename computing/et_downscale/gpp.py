@@ -3,7 +3,6 @@ import ee
 from computing.et_downscale.aet import build_aet_stack
 from computing.et_downscale.helper import (
     MCD12Q1_COL,
-    make_raw_monthly_ndvi,
     fill_monthly_collection,
     build_classifier,
     get_proj_30m,
@@ -12,7 +11,6 @@ from computing.et_downscale.helper import (
     finalize_export_image,
     MONTH_ABBR,
     export_product_asset,
-    wait_for_tasks,
 )
 
 # ---------------------------------------------------------------------------
@@ -44,6 +42,56 @@ _BPLUT_DEFAULT_CLASS = 10
 # =============================================================================
 # GPP / WUE - GEE IMAGE BUILDERS
 # =============================================================================
+
+
+def generate_gpp(
+    cfg, region, common_mask=None, footprint=None, grid_proj=None, proj=None
+):
+    year = cfg["year"]
+    asset_suffix = cfg["asset_suffix"]
+
+    if footprint is None:
+        print("  Building AET stack (pixel-grid carrier) ...")
+        classifier = build_classifier(cfg["model_aez"])
+        aet_stack = build_aet_stack(region, classifier, year)
+
+        grid_proj = aet_stack.select("ET_01").projection()
+        common_mask = build_common_pixel_mask(region, grid_proj)
+        footprint = aet_stack.select("ET_01").mask()
+
+        proj = get_proj_30m(region, year)
+
+    gpp_stack = build_gpp_stack(region, year, proj)
+    gpp_monthly = gpp_stack.updateMask(footprint)
+
+    gpp_annual = ee_annual_mean_band(
+        gpp_monthly, "GPP", band_name="GPP_annual"
+    ).updateMask(footprint)
+    gpp_image = finalize_export_image(
+        gpp_monthly,
+        gpp_annual,
+        region,
+        metadata={
+            "application": "gpp",
+            "units": "g C / m2 / day",
+            "method": "LUE: PAR x fAPAR x eps_max x TMIN_scalar x VPD_scalar",
+            "par_source": "GLDAS SWdown_f_tavg * 0.0864 * 0.45",
+            "fapar_source": "Landsat 8 NDVI -> 1.24*NDVI - 0.168",
+            "bplut_source": "MOD17 C6 / MCD12Q1 IGBP LC_Type1",
+            "tmin_source": "GLDAS Tair_f_inst monthly minimum (K-273.15)",
+            "vpd_source": "GLDAS Tair+Qair+Psurf Magnus formula",
+            "year": str(year),
+            "asset_suffix": asset_suffix,
+            "roi_path": cfg["roi_path"],
+            "description": "Mean daily GPP per month (LUE) + annual mean",
+        },
+        band_descriptions=[f"GPP_{abbr}_gC_m2_day" for abbr in MONTH_ABBR]
+        + ["GPP_annual_mean"],
+        default_proj=grid_proj,
+        common_mask=common_mask,
+    )
+    spec = export_product_asset("gpp", "GPP", gpp_image, cfg)
+    return gpp_stack, spec
 
 
 def _build_bplut_image(lc_img: ee.Image) -> ee.Image:
@@ -192,65 +240,16 @@ def build_gpp_stack(region: ee.Geometry, year: int, proj: ee.Projection) -> ee.I
     return stack.clip(region)
 
 
-# =============================================================================
-# CORE LAYER 3 - GPP
-# =============================================================================
-
-
-def run_gpp(cfg: dict, region: ee.Geometry, aet_stack=None, gpp_stack=None) -> str:
-    """
-    Monthly mean daily GPP via the MOD17 Light Use Efficiency framework.
-
-        GPP = PAR x fAPAR x eps_max x TMIN_scalar x VPD_scalar
-    """
-    tehsil = cfg["tehsil_name"]
-    year = cfg["year"]
-
-    print(f"\n{'=' * 60}")
-    print(f"  [gpp]  {tehsil}  |  {year}")
-    print(f"{'=' * 60}")
-
-    if aet_stack is None:
-        print("  Building AET stack (pixel-grid carrier) ...")
-        classifier = build_classifier(cfg["model_aez"])
-        aet_stack = build_aet_stack(region, classifier, year)
-
-    if gpp_stack is None:
-        print("  Building GPP stack (LUE model: GLDAS + Landsat NDVI + MCD12Q1) ...")
-        proj = get_proj_30m(region, year)
-        gpp_stack = build_gpp_stack(region, year, proj)
-
-    grid_proj = aet_stack.select("ET_01").projection()
-    common_mask = build_common_pixel_mask(region, grid_proj)
-    footprint = aet_stack.select("ET_01").mask()
-    gpp_monthly = gpp_stack.updateMask(footprint)
-    gpp_annual = ee_annual_mean_band(
-        gpp_monthly, "GPP", band_name="GPP_annual"
-    ).updateMask(footprint)
-    image = finalize_export_image(
-        gpp_monthly,
-        gpp_annual,
-        region,
-        metadata={
-            "application": "gpp",
-            "units": "g C / m2 / day",
-            "method": "LUE: PAR x fAPAR x eps_max x TMIN_scalar x VPD_scalar",
-            "par_source": "GLDAS SWdown_f_tavg * 0.0864 * 0.45",
-            "fapar_source": "Landsat 8 NDVI -> 1.24*NDVI - 0.168",
-            "bplut_source": "MOD17 C6 / MCD12Q1 IGBP LC_Type1",
-            "tmin_source": "GLDAS Tair_f_inst monthly minimum (K-273.15)",
-            "vpd_source": "GLDAS Tair+Qair+Psurf Magnus formula",
-            "year": str(year),
-            "tehsil": tehsil,
-            "roi_path": cfg["roi_path"],
-            "description": "Mean daily GPP per month (LUE) + annual mean at 30 m",
-        },
-        band_descriptions=[f"GPP_{abbr}_gC_m2_day" for abbr in MONTH_ABBR]
-        + ["GPP_annual_mean"],
-        default_proj=grid_proj,
-        common_mask=common_mask,
+def make_raw_monthly_ndvi(month, ls_col, year):
+    start = ee.Date.fromYMD(year, month, 1)
+    end = start.advance(1, "month")
+    mid = start.advance(15, "day").millis()
+    monthly_collection = ls_col.filterDate(start, end)
+    ndvi = (
+        monthly_collection.map(
+            lambda img: img.normalizedDifference(["SR_B5", "SR_B4"]).rename("NDVI")
+        )
+        .mean()
+        .rename("NDVI")
     )
-    task_spec = export_product_asset("gpp", "GPP", image, cfg)
-    if cfg.get("wait_exports", True):
-        wait_for_tasks([task_spec], cfg.get("poll_seconds", 30))
-    return task_spec["asset_id"]
+    return ndvi.set("month", month).set("system:time_start", mid)

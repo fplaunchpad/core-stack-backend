@@ -5,37 +5,6 @@ import sys
 import time
 
 
-# ---------------------------------------------------------------------------
-# CONSTANTS - AET pipeline
-# ---------------------------------------------------------------------------
-FEATURE_BANDS = [
-    "MSAVI",
-    "NDMI",
-    "NDVI",
-    "NDWI",
-    "SAVI",
-    "NDBI",
-    "NDIIB7",
-    "Albedo",
-    "LST",
-    "Rainf_tavg",
-    "RootMoist_inst",
-    "SoilMoi0_10cm_inst",
-    "CanopInt_inst",
-    "AvgSurfT_inst",
-    "Qair_f_inst",
-    "Wind_f_inst",
-    "Psurf_f_inst",
-    "SoilTMP0_10cm_inst",
-    "Qsb_acc",
-    "Swnet_tavg",
-    "Lwnet_tavg",
-    "Qg_tavg",
-    "Qh_tavg",
-    "Qle_tavg",
-    "SWdown_f_tavg",
-    "Tair_f_inst",
-]
 MONTH_ABBR = [
     "Jan",
     "Feb",
@@ -73,9 +42,9 @@ def _build_asset_id(cfg: dict, label: str) -> str:
     root = str(cfg.get("asset_root", "")).rstrip("/")
     if not root:
         raise ValueError("asset_root is required")
-    tehsil = _asset_token(cfg.get("tehsil_name", "tehsil"))
+    asset_suffix = _asset_token(cfg.get("asset_suffix"))
     year = int(cfg["year"])
-    return f"{root}/{label}_{tehsil}_{year}"
+    return f"{root}/{label}_{asset_suffix}_{year}"
 
 
 def _asset_exists(asset_id: str) -> bool:
@@ -84,18 +53,6 @@ def _asset_exists(asset_id: str) -> bool:
         return True
     except Exception:
         return False
-
-
-def _prepare_asset_target(asset_id: str, overwrite: bool) -> None:
-    if not _asset_exists(asset_id):
-        return
-    if not overwrite:
-        raise RuntimeError(
-            f"GEE asset already exists: {asset_id}\n"
-            "Pass overwrite_assets=True to replace it."
-        )
-    print(f"  Overwriting existing asset -> {asset_id}")
-    ee.data.deleteAsset(asset_id)
 
 
 def build_common_pixel_mask(
@@ -134,22 +91,6 @@ def ee_annual_mean_band(
         for month in range(1, 13)
     ]
     return ee.ImageCollection.fromImages(images).mean().rename(band_name).float()
-
-
-def build_wue_image(aet_stack: ee.Image, gpp_stack: ee.Image) -> ee.Image:
-    """WUE_01...12 = GPP / AET_mm (g C / kg H2O)."""
-    bands = []
-    for month in range(1, 13):
-        aet_mm = aet_stack.select(f"ET_{month:02d}").multiply(0.1)
-        wue = (
-            gpp_stack.select(f"GPP_{month:02d}").divide(aet_mm).updateMask(aet_mm.gt(0))
-        )
-        wue = wue.updateMask(wue.gte(0)).updateMask(wue.lte(50))
-        bands.append(wue.rename(f"WUE_{month:02d}").float())
-    stack = bands[0]
-    for band in bands[1:]:
-        stack = stack.addBands(band)
-    return stack
 
 
 def _apply_image_properties(img: ee.Image, props: dict) -> ee.Image:
@@ -208,6 +149,10 @@ def wait_for_tasks(
     while pending:
         finished_now = []
         for asset_id, spec in pending.items():
+            if not spec["task"]:
+                finished_now.append(asset_id)
+                final_statuses[asset_id] = "No Task"
+                continue
             status = spec["task"].status()
             state = status.get("state", "UNKNOWN")
             if state in {"COMPLETED", "FAILED", "CANCELLED", "CANCEL_REQUESTED"}:
@@ -242,24 +187,37 @@ def wait_for_tasks(
     return final_statuses
 
 
+def _prepare_asset_target(asset_id: str, overwrite: bool) -> bool:
+    if not _asset_exists(asset_id):
+        return False
+    if not overwrite:
+        print(f"GEE asset already exists: {asset_id}\n")
+        return True
+        # raise RuntimeError(
+        #     f"GEE asset already exists: {asset_id}\n"
+        #     "Pass overwrite_assets=True to replace it."
+        # )
+    print(f"  Overwriting existing asset -> {asset_id}")
+    ee.data.deleteAsset(asset_id)
+    return True
+
+
 def export_product_asset(
     label: str, display_name: str, image: ee.Image, cfg: dict
 ) -> dict:
     asset_id = _build_asset_id(cfg, label)
-    _prepare_asset_target(asset_id, bool(cfg.get("overwrite_assets", False)))
-    print(f"  {display_name} asset -> {asset_id}")
-    task = _start_asset_export(
-        image,
-        asset_id,
-        description=f"export_{label}_{_asset_token(cfg['tehsil_name'])}_{cfg['year']}",
+    asset_exists = _prepare_asset_target(
+        asset_id, bool(cfg.get("overwrite_assets", False))
     )
+    print(f"  {display_name} asset -> {asset_id}")
+    task = None
+    if not asset_exists:
+        task = _start_asset_export(
+            image,
+            asset_id,
+            description=f"export_{label}_{_asset_token(cfg['asset_suffix'])}_{cfg['year']}",
+        )
     return {"asset_id": asset_id, "task": task, "label": label}
-
-
-def load_tehsil(asset: str):
-    fc = ee.FeatureCollection(asset)
-    region = fc.geometry()
-    return fc, region
 
 
 def build_classifier(model_path: str) -> ee.Classifier:
@@ -319,90 +277,6 @@ def monthly_collection_to_stack(
     return stack.rename(new_names)
 
 
-def make_raw_monthly_ndvi(month, ls_col, year):
-    start = ee.Date.fromYMD(year, month, 1)
-    end = start.advance(1, "month")
-    mid = start.advance(15, "day").millis()
-    monthly_collection = ls_col.filterDate(start, end)
-    ndvi = (
-        monthly_collection.map(
-            lambda img: img.normalizedDifference(["SR_B5", "SR_B4"]).rename("NDVI")
-        )
-        .mean()
-        .rename("NDVI")
-    )
-    return ndvi.set("month", month).set("system:time_start", mid)
-
-
-def calc_landsat_indices(img: ee.Image) -> ee.Image:
-    ndvi = img.normalizedDifference(["SR_B5", "SR_B4"]).rename("NDVI")
-    savi = img.expression(
-        "((NIR-R)/(NIR+R+0.5))*1.5",
-        {"NIR": img.select("SR_B5"), "R": img.select("SR_B4")},
-    ).rename("SAVI")
-    msavi = img.expression(
-        "(2*NIR+1-sqrt(pow((2*NIR+1),2)-8*(NIR-R)))/2",
-        {"NIR": img.select("SR_B5"), "R": img.select("SR_B4")},
-    ).rename("MSAVI")
-    ndbi = img.normalizedDifference(["SR_B6", "SR_B5"]).rename("NDBI")
-    ndwi = img.normalizedDifference(["SR_B3", "SR_B5"]).rename("NDWI")
-    ndmi = img.normalizedDifference(["SR_B5", "SR_B6"]).rename("NDMI")
-    ndiib7 = img.normalizedDifference(["SR_B5", "SR_B7"]).rename("NDIIB7")
-    albedo = img.expression(
-        "((0.356*B1)+(0.130*B2)+(0.373*B3)+(0.085*B4)+(0.072*B5)-0.018)/1.016",
-        {
-            "B1": img.select("SR_B1"),
-            "B2": img.select("SR_B2"),
-            "B3": img.select("SR_B3"),
-            "B4": img.select("SR_B4"),
-            "B5": img.select("SR_B5"),
-        },
-    ).rename("Albedo")
-    lst = img.select("ST_B10").multiply(0.00341802).add(149.0).rename("LST")
-    return img.addBands([ndvi, savi, msavi, ndbi, ndwi, ndmi, ndiib7, albedo, lst])
-
-
-def predict_daily_et(
-    ls_img: ee.Image, region: ee.Geometry, classifier: ee.Classifier
-) -> ee.Image:
-    idx = calc_landsat_indices(ls_img)
-    clim = (
-        ee.ImageCollection("NASA/GLDAS/V021/NOAH/G025/T3H")
-        .filterBounds(region)
-        .filterDate(
-            ls_img.date().advance(-12, "hour"), ls_img.date().advance(12, "hour")
-        )
-        .mean()
-        .resample("bilinear")
-        .reproject(crs=ls_img.select("SR_B5").projection(), scale=30)
-    )
-    return (
-        idx.addBands(clim)
-        .select(FEATURE_BANDS)
-        .classify(classifier)
-        .rename("ET_daily")
-        .set("system:time_start", ls_img.date().millis())
-    )
-
-
-def make_raw_monthly(month, ls_col, region, classifier, year):
-    start = ee.Date.fromYMD(year, month, 1)
-    end = start.advance(1, "month")
-    mid = start.advance(15, "day").millis()
-    monthly_collection = ls_col.filterDate(start, end)
-    et = (
-        monthly_collection.map(lambda img: predict_daily_et(img, region, classifier))
-        .mean()
-        .rename("ET_daily")
-    )
-    return et.set("month", month).set("system:time_start", mid)
-
-
-# =============================================================================
-# IMAGE BUILDERS  (AET / PET / RWDI / WS / KC / combined)
-# =============================================================================
-
-
 def get_proj_30m(region: ee.Geometry, year: int) -> ee.Projection:
     """Return the 30 m Landsat projection for this region/year."""
     ls_ref = (
@@ -412,25 +286,3 @@ def get_proj_30m(region: ee.Geometry, year: int) -> ee.Projection:
         .first()
     )
     return ls_ref.select("SR_B5").projection()
-
-
-def build_rwdi_image(aet_stack: ee.Image, pet_stack: ee.Image) -> ee.Image:
-    """RWDI_01...12 = (1 - AET/PET) x 100 (%)"""
-    bands = []
-    for month in range(1, 13):
-        rwdi = (
-            ee.Image(1)
-            .subtract(
-                aet_stack.select(f"ET_{month:02d}").divide(
-                    pet_stack.select(f"PET_{month:02d}")
-                )
-            )
-            .multiply(100)
-            .rename(f"RWDI_{month:02d}")
-            .float()
-        )
-        bands.append(rwdi)
-    stack = bands[0]
-    for band in bands[1:]:
-        stack = stack.addBands(band)
-    return stack

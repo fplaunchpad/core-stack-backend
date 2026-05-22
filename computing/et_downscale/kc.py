@@ -10,67 +10,59 @@ from computing.et_downscale.helper import (
     ee_annual_mean_band,
     finalize_export_image,
     export_product_asset,
-    wait_for_tasks,
 )
 from computing.et_downscale.pet import build_pet_stack
 
 
-def _run_kc_application(
-    cfg: dict, region: ee.Geometry, aet_stack=None, pet_stack=None
-) -> str:
-    """Shared runner for the monthly Kc proxy (AET/PET)."""
-    tehsil = cfg["tehsil_name"]
+def generate_kc(
+    cfg,
+    region,
+    footprint=None,
+    common_mask=None,
+    grid_proj=None,
+    aet_stack=None,
+    pet_stack=None,
+):
     year = cfg["year"]
-    label = "kc"
-    title = "Crop Coefficient (Kc)"
-    stack_builder = build_kc_image
-    band_names = [f"KC_{abbr}" for abbr in MONTH_ABBR] + ["KC_annual"]
-    metadata = {
-        "application": "kc",
-        "units": "ratio (AET/PET)",
-        "formula": "AET / PET",
-        "modis_collection": MODIS_COL,
-        "year": str(year),
-        "tehsil": tehsil,
-        "roi_path": cfg["roi_path"],
-        "description": "Monthly Kc proxy from AET/PET + annual mean",
-    }
-
-    print(f"\n{'=' * 60}")
-    print(f"  [{label}]  {tehsil}  |  {year}")
-    print(f"{'=' * 60}")
-
-    if aet_stack is None:
-        print("  Building AET stack ...")
-        classifier = build_classifier(cfg["model_aez"])
-        aet_stack = build_aet_stack(region, classifier, year)
 
     if pet_stack is None:
         print("  Building PET stack (MODIS MOD16A2) ...")
         proj = get_proj_30m(region, year)
         pet_stack = build_pet_stack(region, year, MODIS_COL, proj)
 
-    ratio_img = stack_builder(aet_stack, pet_stack)
-    grid_proj = aet_stack.select("ET_01").projection()
-    common_mask = build_common_pixel_mask(region, grid_proj)
-    footprint = aet_stack.select("ET_01").mask()
-    ratio_monthly = ratio_img.updateMask(footprint)
-    ratio_annual = ee_annual_mean_band(
-        ratio_monthly, "KC", band_name="KC_annual"
-    ).updateMask(footprint)
-    image = finalize_export_image(
-        ratio_monthly,
-        ratio_annual,
+    if aet_stack is None:
+        print("  Building AET stack ...")
+        classifier = build_classifier(cfg["model_aez"])
+        aet_stack = build_aet_stack(region, classifier, year)
+
+        grid_proj = aet_stack.select("ET_01").projection()
+        common_mask = build_common_pixel_mask(region, grid_proj)
+        footprint = aet_stack.select("ET_01").mask()
+
+    kc_monthly = build_kc_image(aet_stack, pet_stack).updateMask(footprint)
+    kc_annual = ee_annual_mean_band(kc_monthly, "KC", band_name="KC_annual").updateMask(
+        footprint
+    )
+    kc_image = finalize_export_image(
+        kc_monthly,
+        kc_annual,
         region,
-        metadata=metadata,
-        band_descriptions=band_names,
+        metadata={
+            "application": "kc",
+            "units": "ratio (AET/PET)",
+            "formula": "AET / PET",
+            "modis_collection": MODIS_COL,
+            "year": str(year),
+            "asset_suffix": cfg["asset_suffix"],
+            "roi_path": cfg["roi_path"],
+            "description": "Monthly Kc proxy from AET/PET + annual mean",
+        },
+        band_descriptions=[f"KC_{abbr}" for abbr in MONTH_ABBR] + ["KC_annual"],
         default_proj=grid_proj,
         common_mask=common_mask,
     )
-    task_spec = export_product_asset(label, title, image, cfg)
-    if cfg.get("wait_exports", True):
-        wait_for_tasks([task_spec], cfg.get("poll_seconds", 30))
-    return task_spec["asset_id"]
+    spec = export_product_asset("kc", "Crop Coefficient (Kc)", kc_image, cfg)
+    return spec
 
 
 def build_kc_image(aet_stack: ee.Image, pet_stack: ee.Image) -> ee.Image:
@@ -88,16 +80,3 @@ def build_kc_image(aet_stack: ee.Image, pet_stack: ee.Image) -> ee.Image:
     for band in bands[1:]:
         stack = stack.addBands(band)
     return stack
-
-
-# =============================================================================
-# DERIVED APPLICATION 2 - KC
-# =============================================================================
-
-
-def run_kc(cfg: dict, region: ee.Geometry, aet_stack=None, pet_stack=None) -> str:
-    """
-    Kc proxy = AET / PET
-    Output  : kc_<tehsil>_<year> GEE asset (13 bands)
-    """
-    return _run_kc_application(cfg, region, aet_stack=aet_stack, pet_stack=pet_stack)
