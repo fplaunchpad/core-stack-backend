@@ -1095,7 +1095,10 @@ class OrganizationPlanViewSet(viewsets.ReadOnlyModelViewSet):
                     if user.organization != organization:
                         return PlanApp.objects.none()
                 queryset = PlanApp.objects.filter(
-                    organization=organization, enabled=True
+                    organization=organization,
+                    enabled=True,
+                    is_dpr_reviewed=True,
+                    is_completed=True,
                 )
             except Organization.DoesNotExist:
                 return PlanApp.objects.none()
