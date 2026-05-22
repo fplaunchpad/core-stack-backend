@@ -1105,10 +1105,20 @@ class OrganizationPlanViewSet(viewsets.ReadOnlyModelViewSet):
         filter_test_demo = (
             self.request.query_params.get("filter_test_plan", "").lower() == "true"
         )
+        filter_dpr_reviewed = (
+            self.request.query_params.get("is_dpr_reviewed", "").lower() == "true"
+        )
+        filter_is_completed = (
+            self.request.query_params.get("is_completed", "").lower() == "true"
+        )
         if filter_test_demo:
             queryset = queryset.exclude(
                 Q(plan__icontains="test") | Q(plan__icontains="demo")
             )
+        if filter_dpr_reviewed:
+            queryset = queryset.filter(is_dpr_reviewed=True)
+        if filter_is_completed:
+            queryset = queryset.filter(is_completed=True)
 
         return queryset.order_by("-created_at")
 
