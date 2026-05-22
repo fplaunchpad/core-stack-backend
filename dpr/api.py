@@ -51,18 +51,6 @@ from .services import (
     patch_dpr_report_status,
     update_demand_status,
 )
-from .gen_multi_mws_report import (
-    get_cropping_mws_data,
-    get_degrad_mws_data,
-    get_drought_mws_data,
-    get_lulc_mws_data,
-    get_mws_data,
-    get_reduction_mws_data,
-    get_surface_wb_mws_data,
-    get_terrain_mws_data,
-    get_urban_mws_data,
-    get_water_balance_mws_data,
-)
 from .gen_mws_report import (
     get_change_detection_data,
     get_land_conflict_industrial_data,
@@ -96,6 +84,11 @@ from .gen_tehsil_report import (
 from .gen_report_download import render_pdf_with_firefox
 from .utils import validate_email, transform_name
 from .tasks import generate_dpr_task
+import tempfile
+import os
+from .generate_yuktdhara_format import csv_to_kml, fetch_data
+import zipfile
+from django.http import FileResponse
 
 state_param = openapi.Parameter(
     "state",
@@ -209,19 +202,23 @@ def generate_dpr(request):
 @schema(None)
 def generate_mws_report(request):
     try:
-        # ? district, block, mwsId
+        # ? Extract and transform parameters
         params = request.GET
         result = {}
 
         for key, value in params.items():
             result[key] = value
 
+        # Transform district, block, and state
+        district = transform_name(result["district"])
+        block = transform_name(result["block"])
+        state = transform_name(result["state"])
+        uid = result["uid"]
+
         # print("Api Processing End 1", datetime.now())
 
         # ? OSM description generation
-        parameter_block, parameter_mws = get_osm_data(
-            result["state"], result["district"], result["block"], result["uid"]
-        )
+        parameter_block, parameter_mws = get_osm_data(state, district, block, uid)
 
         # ? Terrain Description generation
         (
@@ -234,20 +231,16 @@ def generate_mws_report(request):
             lulc_block_slope,
             lulc_mws_plain,
             lulc_block_plain,
-        ) = get_terrain_data(
-            result["state"], result["district"], result["block"], result["uid"]
-        )
+        ) = get_terrain_data(state, district, block, uid)
 
         # ? Degradation Description generation
         land_degrad, tree_degrad, urbanization, restore_desc = (
-            get_change_detection_data(
-                result["state"], result["district"], result["block"], result["uid"]
-            )
+            get_change_detection_data(state, district, block, uid)
         )
 
         # ? Double Cropping Description Generation
         double_crop_des, year_range_text = get_double_cropping_area(
-            result["state"], result["district"], result["block"], result["uid"]
+            state, district, block, uid
         )
 
         # ? Surface Waterbody Description
@@ -259,9 +252,7 @@ def generate_mws_report(request):
             rabi_data,
             zaid_data,
             water_years,
-        ) = get_surface_Water_bodies_data(
-            result["state"], result["district"], result["block"], result["uid"]
-        )
+        ) = get_surface_Water_bodies_data(state, district, block, uid)
 
         # ? Water Balance Description
         (
@@ -273,20 +264,14 @@ def generate_mws_report(request):
             et_data,
             dg_data,
             wb_years,
-        ) = get_water_balance_data(
-            result["state"], result["district"], result["block"], result["uid"]
-        )
+        ) = get_water_balance_data(state, district, block, uid)
 
         # ? SOGE Description
-        soge_desc = get_soge_data(
-            result["state"], result["district"], result["block"], result["uid"]
-        )
+        soge_desc = get_soge_data(state, district, block, uid)
 
         # ? Drought Description
         drought_desc, drought_weeks, mod_drought, sev_drought, drysp_all, dg_years = (
-            get_drought_data(
-                result["state"], result["district"], result["block"], result["uid"]
-            )
+            get_drought_data(state, district, block, uid)
         )
 
         # ? Village Profile
@@ -302,36 +287,24 @@ def generate_mws_report(request):
             ofl_works,
             ca_works,
             ofw_works,
-        ) = get_village_data(
-            result["state"], result["district"], result["block"], result["uid"]
-        )
+        ) = get_village_data(state, district, block, uid)
 
         # ? Cropping Intensity Description
         inten_desc1, inten_desc2, single, double, triple, uncrop, crop_years = (
-            get_cropping_intensity(
-                result["state"], result["district"], result["block"], result["uid"]
-            )
+            get_cropping_intensity(state, district, block, uid)
         )
 
         # ? LCW and Industrial Data Description
-        lcw_desc = get_land_conflict_industrial_data(
-            result["state"], result["district"], result["block"], result["uid"]
-        )
-        factory_desc = get_factory_data(
-            result["state"], result["district"], result["block"], result["uid"]
-        )
-        mining_desc = get_mining_data(
-            result["state"], result["district"], result["block"], result["uid"]
-        )
+        lcw_desc = get_land_conflict_industrial_data(state, district, block, uid)
+        factory_desc = get_factory_data(state, district, block, uid)
+        mining_desc = get_mining_data(state, district, block, uid)
 
-        green_credits = get_green_credit_data(
-            result["state"], result["district"], result["block"], result["uid"]
-        )
+        green_credits = get_green_credit_data(state, district, block, uid)
 
         context = {
-            "district": result["district"],
-            "block": result["block"],
-            "mws_id": result["uid"],
+            "district": district,
+            "block": block,
+            "mws_id": uid,
             "block_osm": parameter_block,
             "mws_osm": parameter_mws,
             "terrain_mws": terrain_mws,
@@ -417,8 +390,8 @@ def generate_resource_report(request):
             result[key] = value
 
         context = {
-            "district": result["district"],
-            "block": result["block"],
+            "district": transform_name(result["district"]),
+            "block": transform_name(result["block"]),
             "plan_id": result["plan_id"],
             "plan_name": result["plan_name"],
         }
@@ -432,20 +405,39 @@ def generate_resource_report(request):
 @api_view(["GET"])
 @schema(None)
 @auth_free
-def download_mws_report(request):
-    # Require the usual params, but render from your external domain
-    required = ("state", "district", "block", "uid")
+def download_report(request):
+    report_type = request.GET.get('report_type')
+    
+    if not report_type:
+        return HttpResponseBadRequest("Missing 'report_type' parameter")
+    
+    # Define required params based on report type
+    if report_type == 'mws':
+        required = ("state", "district", "block", "uid", "report_type")
+    elif report_type == 'resource':
+        required = ("district", "block", "plan_id", "plan_name", "report_type")
+    else:
+        return HttpResponseBadRequest(f"Unknown report_type: {report_type}")
+    
     missing = [k for k in required if k not in request.GET]
     if missing:
         return HttpResponseBadRequest(f"Missing query params: {', '.join(missing)}")
-
-    qs = request.GET.urlencode()
-    report_html_url = (
-        f"https://geoserver.core-stack.org/api/v1/generate_mws_report/?{qs}"
-    )
+    
+    if report_type == 'mws':
+        report_html_url = (
+            f"https://geoserver.core-stack.org/api/v1/generate_mws_report/"
+            f"?state={request.GET.get('state')}&district={request.GET.get('district')}&block={request.GET.get('block')}&uid={request.GET.get('uid')}"
+        )
+        filename = f"mws_report_{request.GET.get('uid')}.pdf"
+    elif report_type == 'resource':
+        report_html_url = (
+            f"https://geoserver.core-stack.org/api/v1/generate_resource_report/"
+            f"?district={request.GET.get('district')}&block={request.GET.get('block')}&plan_id={request.GET.get('plan_id')}&plan_name={request.GET.get('plan_name')}"
+        )
+        filename = f"resource_report_{request.GET.get('plan_name')}.pdf"
+    
     pdf_bytes = render_pdf_with_firefox(report_html_url)
-
-    filename = f"mws_report_{request.GET.get('uid')}.pdf"
+    
     resp = HttpResponse(pdf_bytes, content_type="application/pdf")
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
     return resp
@@ -583,7 +575,9 @@ class DPRPagination(PageNumberPagination):
 def _get_plan_or_404(plan_id):
     plan = get_plan_details(plan_id)
     if plan is None:
-        return None, Response({"error": "Plan not found"}, status=status.HTTP_404_NOT_FOUND)
+        return None, Response(
+            {"error": "Plan not found"}, status=status.HTTP_404_NOT_FOUND
+        )
     return plan, None
 
 
@@ -634,7 +628,9 @@ def dpr_settlements(request, plan_id):
     _, err = _get_plan_or_404(plan_id)
     if err:
         return err
-    return _paginated_response(request, get_settlements_data(plan_id), SettlementSerializer)
+    return _paginated_response(
+        request, get_settlements_data(plan_id), SettlementSerializer
+    )
 
 
 @api_security_check(auth_type="JWT_or_API_key", allowed_methods=["GET"])
@@ -652,7 +648,9 @@ def dpr_livestock(request, plan_id):
     _, err = _get_plan_or_404(plan_id)
     if err:
         return err
-    return _paginated_response(request, get_livestock_data(plan_id), LivestockSerializer)
+    return _paginated_response(
+        request, get_livestock_data(plan_id), LivestockSerializer
+    )
 
 
 # MARK: Section D
@@ -671,7 +669,9 @@ def dpr_waterbodies(request, plan_id):
     _, err = _get_plan_or_404(plan_id)
     if err:
         return err
-    return _paginated_response(request, get_waterbodies_data(plan_id), WaterbodySerializer)
+    return _paginated_response(
+        request, get_waterbodies_data(plan_id), WaterbodySerializer
+    )
 
 
 # MARK: Section E
@@ -684,10 +684,14 @@ def dpr_maintenance(request, plan_id):
     maintenance_type = request.query_params.get("type", "gw")
     if maintenance_type not in VALID_MAINTENANCE_TYPES:
         return Response(
-            {"error": f"Invalid type. Choose from: {', '.join(sorted(VALID_MAINTENANCE_TYPES))}"},
+            {
+                "error": f"Invalid type. Choose from: {', '.join(sorted(VALID_MAINTENANCE_TYPES))}"
+            },
             status=status.HTTP_400_BAD_REQUEST,
         )
-    return _paginated_response(request, get_maintenance_data(plan_id, maintenance_type), MaintenanceSerializer)
+    return _paginated_response(
+        request, get_maintenance_data(plan_id, maintenance_type), MaintenanceSerializer
+    )
 
 
 # MARK: Section F
@@ -707,7 +711,9 @@ def dpr_livelihood(request, plan_id):
     _, err = _get_plan_or_404(plan_id)
     if err:
         return err
-    return _paginated_response(request, get_livelihood_data(plan_id), LivelihoodSerializer)
+    return _paginated_response(
+        request, get_livelihood_data(plan_id), LivelihoodSerializer
+    )
 
 
 # MARK: DPR Report Status Summary
@@ -765,9 +771,12 @@ def dpr_global_status_tracking(request):
     status_filter = request.query_params.get("status")
     if status_filter:
         from .services import VALID_DEMAND_STATUSES
+
         if status_filter not in VALID_DEMAND_STATUSES:
             return Response(
-                {"error": f"Invalid status. Choose from: {', '.join(sorted(VALID_DEMAND_STATUSES))}"},
+                {
+                    "error": f"Invalid status. Choose from: {', '.join(sorted(VALID_DEMAND_STATUSES))}"
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
         filters["status"] = status_filter
@@ -826,7 +835,43 @@ def dpr_update_demand_status(request, plan_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    result, error = update_demand_status(plan_id, resource_type, resource_id, new_status)
+    result, error = update_demand_status(
+        plan_id, resource_type, resource_id, new_status
+    )
     if error:
         return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
     return Response(result)
+
+
+# api to download csv and kml file of demand data
+@api_security_check(auth_type="JWT_or_API_key", allowed_methods=["GET"])
+@schema(None)
+def export_yuktdhara(request):
+
+    plan_id = request.query_params.get("plan_id")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+
+        csv_path = os.path.join(temp_dir, f"Yuktdhara_{plan_id}.csv")
+
+        kml_path = os.path.join(temp_dir, f"Yuktdhara_{plan_id}.kml")
+
+        zip_path = os.path.join(temp_dir, f"Yuktdhara_{plan_id}.zip")
+
+        fetch_data(plan_id, csv_path)
+
+        csv_to_kml(csv_path, kml_path)
+
+        with zipfile.ZipFile(zip_path, "w") as zipf:
+
+            zipf.write(csv_path, arcname=os.path.basename(csv_path))
+
+            zipf.write(kml_path, arcname=os.path.basename(kml_path))
+
+        with open(zip_path, "rb") as f:
+            response = HttpResponse(f.read(), content_type="application/zip")
+            response["Content-Disposition"] = (
+                f"attachment; " f'filename="Yuktdhara_{plan_id}.zip"'
+            )
+
+            return response
