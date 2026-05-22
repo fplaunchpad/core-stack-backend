@@ -92,7 +92,7 @@ function step_label() {
         django_migrations) echo "Run Django migrations" ;;
         seed_data) echo "Load seed data" ;;
         superuser) echo "Ensure test superuser" ;;
-        geoserver) echo "Configure GeoServer connection/workspace" ;;
+        geoserver) echo "Configure GeoServer connection, workspaces, and styles" ;;
         gee_configuration) echo "Configure Google Earth Engine account and project" ;;
         gcs_bucket_configuration) echo "Configure Google Cloud Storage bucket for GEE" ;;
         admin_boundary_data) echo "Download admin-boundary data" ;;
@@ -112,7 +112,7 @@ Options:
   --skip A,B,C          Skip the listed comma-separated steps.
   --input KEY=VALUE     Provide an optional installer input.
   --gee-json PATH       Import this GEE service-account JSON without prompting.
-  --geoserver-config    Configure GeoServer only: URL,USERNAME,PASSWORD
+  --geoserver-config    Configure GeoServer: URL,USERNAME,PASSWORD (workspaces + bundled styles)
   --data-dir PATH       Set DATA_DIR path (also updates EXCEL_DIR).
   --list-steps          Print the available installer steps and exit.
   -h, --help            Show this help text.
@@ -437,6 +437,7 @@ function parse_args() {
         if [ -z "$gs_config_url" ] || [ -z "$gs_config_user" ] || [ -z "$gs_config_pass" ]; then
             echo "Invalid --geoserver-config value."
             echo "Expected: --geoserver-config http://geoserver:8080/geoserver,admin,geoserver"
+            echo "Creates workspaces and uploads bundled SLD styles from installation/geoserver/styles/."
             exit 1
         fi
 
@@ -461,7 +462,7 @@ function print_optional_input_catalog() {
     echo "CLI shortcuts:"
     echo "  --input gee_json=/full/path/to/service-account.json"
     echo "  --gee-json /full/path/to/service-account.json"
-    echo "  --geoserver-config http://geoserver:8080/geoserver,admin,geoserver"
+    echo "  --geoserver-config http://geoserver:8080/geoserver,admin,geoserver  # workspaces + styles"
     echo "  --input public_api_key=your-public-api-key"
     echo "  --input public_api_base_url=https://geoserver.core-stack.org/api/v1"
     echo "  --input geoserver_url=https://host/geoserver"
@@ -953,6 +954,8 @@ function install_rabbitmq() {
 
 GEOSERVER_DEFAULT_URL="http://localhost:8080/geoserver"
 GEOSERVER_DEFAULT_USER="admin"
+GEOSERVER_STYLES_DIR="$INSTALL_SCRIPT_DIR/geoserver/styles"
+GEOSERVER_STYLE_BUNDLE_SCRIPT="$INSTALL_SCRIPT_DIR/geoserver_style_bundle.py"
 GEOSERVER_WORKSPACE="corestack"
 GEOSERVER_WORKSPACES_DEFAULT=(
     "corestack"
@@ -1177,6 +1180,59 @@ function select_reachable_geoserver_url() {
     return 1
 }
 
+function geoserver_config_log_phase() {
+    local phase="$1"
+    echo ""
+    echo "--- GeoServer config: $phase ---"
+}
+
+function sync_geoserver_styles_from_bundle() {
+    local url="$1"
+    local user="$2"
+    local pass="$3"
+    local manifest_path="$GEOSERVER_STYLES_DIR/manifest.json"
+    local has_sld_files=0
+
+    geoserver_config_log_phase "sync bundled styles"
+
+    if [ ! -d "$GEOSERVER_STYLES_DIR" ]; then
+        echo "No bundled GeoServer styles directory at $GEOSERVER_STYLES_DIR. Skipping style sync."
+        return 0
+    fi
+
+    if [ -f "$manifest_path" ]; then
+        has_sld_files=1
+    elif find "$GEOSERVER_STYLES_DIR" -maxdepth 3 -name '*.sld' -print -quit 2>/dev/null | grep -q .; then
+        has_sld_files=1
+    fi
+
+    if [ "$has_sld_files" -eq 0 ]; then
+        echo "No bundled GeoServer SLD files found. Skipping style sync."
+        echo "Run installation/geoserver_style_bundle.py fetch once, then commit installation/geoserver/styles/."
+        return 0
+    fi
+
+    if [ ! -f "$GEOSERVER_STYLE_BUNDLE_SCRIPT" ]; then
+        echo "ERROR: GeoServer style bundle script not found at $GEOSERVER_STYLE_BUNDLE_SCRIPT"
+        return 1
+    fi
+
+    echo "Syncing bundled GeoServer styles from $GEOSERVER_STYLES_DIR ..."
+    activate_conda_env
+    cd "$BACKEND_DIR"
+    if python "$GEOSERVER_STYLE_BUNDLE_SCRIPT" sync \
+        --url "$url" \
+        --username "$user" \
+        --password "$pass" \
+        --styles-dir "$GEOSERVER_STYLES_DIR"; then
+        echo "GeoServer styles synced."
+        return 0
+    fi
+
+    echo "WARNING: GeoServer style sync reported failures. Review the output above."
+    return 1
+}
+
 function configure_geoserver() {
     local geoserver_url="${GEOSERVER_URL_ARG:-}"
     local geoserver_user="${GEOSERVER_USERNAME_ARG:-}"
@@ -1231,20 +1287,25 @@ function configure_geoserver() {
         return 1
     fi
 
-    if [ -f "$APP_ENV_FILE" ]; then
-        if [ -z "$geoserver_workspaces_csv" ]; then
-            geoserver_workspaces_csv="$(IFS=,; echo "${GEOSERVER_WORKSPACES_DEFAULT[*]}")"
-        fi
+    if [ -z "$geoserver_workspaces_csv" ]; then
+        geoserver_workspaces_csv="$(IFS=,; echo "${GEOSERVER_WORKSPACES_DEFAULT[*]}")"
     fi
 
+    geoserver_config_log_phase "connect to GeoServer REST API"
     if ! select_reachable_geoserver_url "$geoserver_url" "$geoserver_user" "$geoserver_pass" selected_geoserver_url; then
         echo "ERROR: Could not connect to GeoServer REST with the provided credentials."
         echo "Tried URL candidates: $geoserver_url, $GEOSERVER_DEFAULT_URL, http://geoserver:8080/geoserver, http://host.docker.internal:8080/geoserver, http://localhost:8080/geoserver"
         return 1
     fi
 
+    geoserver_config_log_phase "ensure workspaces"
     if ! ensure_geoserver_workspaces "$selected_geoserver_url" "$geoserver_user" "$geoserver_pass" "$geoserver_workspaces_csv"; then
         echo "ERROR: GeoServer workspace setup failed."
+        return 1
+    fi
+
+    if ! sync_geoserver_styles_from_bundle "$selected_geoserver_url" "$geoserver_user" "$geoserver_pass"; then
+        echo "ERROR: GeoServer style sync failed."
         return 1
     fi
 
@@ -1256,9 +1317,11 @@ function configure_geoserver() {
         echo "GeoServer connection details written to .env."
     fi
 
+    echo ""
     echo "GeoServer configuration complete."
     echo "  URL: ${selected_geoserver_url}/web/"
     echo "  Default workspace: ${GEOSERVER_WORKSPACE}"
+    echo "  Styles bundle: ${GEOSERVER_STYLES_DIR}"
     mark_step_complete "geoserver"
 }
 
