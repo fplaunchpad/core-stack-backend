@@ -27,13 +27,6 @@ def load_yuktdhara_config():
         return json.load(f)
 
 
-YUKTDHARA_CONFIG = load_yuktdhara_config()
-
-CSV_COLUMNS = YUKTDHARA_CONFIG["columns"]
-
-CSV_MAPPING_CONFIG = YUKTDHARA_CONFIG["mapping"]
-
-
 def is_community_demand(demand_type):
     if not demand_type:
         return False
@@ -49,15 +42,15 @@ MAINTENANCE_CATEGORY_MAP = {
 }
 
 
-def build_row(item, mapping_type):
+def build_row(item, mapping_type, config):
 
-    config = CSV_MAPPING_CONFIG[mapping_type]
+    mapping_config = config["mapping"][mapping_type]
 
     row = {}
 
     community = is_community_demand(item.get("demand_type"))
 
-    for output_column, rules in config.items():
+    for output_column, rules in mapping_config.items():
 
         # static values
         if "value" in rules:
@@ -126,28 +119,29 @@ def export_csv(
     livelihood_data,
     csv_path,
 ):
+    config = load_yuktdhara_config()
     rows = []
 
     # maintenance rows
     for item in maintenance_data:
-        rows.append(build_row(item, "maintenance"))
+        rows.append(build_row(item, "maintenance", config))
     logger.info("Maintenance demand is added")
 
     # nrm rows
     for item in nrm_data:
-        rows.append(build_row(item, "nrm"))
+        rows.append(build_row(item, "nrm", config))
     logger.info("New demand is added")
 
     # livelihood rows
     for item in livelihood_data:
-        rows.append(build_row(item, "livelihood"))
+        rows.append(build_row(item, "livelihood", config))
     logger.info("Livelihood demand is added")
 
     file_name = csv_path
 
     # write csv
     with open(file_name, "w", newline="", encoding="utf-8") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=CSV_COLUMNS)
+        writer = csv.DictWriter(csvfile, fieldnames=config["columns"])
 
         writer.writeheader()
         writer.writerows(rows)
