@@ -37,10 +37,9 @@ def _compute_mws_connectivity_for_watersheds(watersheds_gdf, mws_gdf):
 
     watersheds_gdf = validate_geometry(watersheds_gdf).reset_index(drop=True)
     mws_gdf = validate_geometry(mws_gdf).reset_index(drop=True)
-
     outer_boundary = watersheds_gdf.geometry.unary_union
 
-    # ── Step 1: Filter by ROI (equivalent to GEE filterBounds) ────────────
+    # Step 1: Filter MWS features that intersect the ROI
     mws_in_roi = mws_gdf[mws_gdf.intersects(outer_boundary)].copy()
 
     if mws_in_roi.empty:
@@ -49,37 +48,20 @@ def _compute_mws_connectivity_for_watersheds(watersheds_gdf, mws_gdf):
 
     print(f"MWS connectivity within outer boundary: {len(mws_in_roi)}")
 
-    # ── Step 2: Spatial join to assign watershed uid ──────────────────────
-    watersheds_indexed = watersheds_gdf[["uid", "geometry"]].copy()
-
+    # Step 2: Spatial join to clip results to individual watersheds
     mws_in_roi = gpd.sjoin(
         mws_in_roi,
-        watersheds_indexed,
+        watersheds_gdf[["geometry"]],  # no uid, no collision
         how="inner",
         predicate="intersects",
-    )
+    ).drop(columns=["index_right"], errors="ignore")
 
-    if "index_right" in mws_in_roi.columns:
-        mws_in_roi = mws_in_roi.drop(columns=["index_right"])
-
-    # Drop specific columns if they exist
-    cols_to_drop = [col for col in ["uid_left", "uid_right", "id"] if col in mws_in_roi.columns]
-    if cols_to_drop:
-        mws_in_roi = mws_in_roi.drop(columns=cols_to_drop)
-
-    # ── Step 3: Final cleanup ─────────────────────────────────────────────
-    mws_in_roi = mws_in_roi[~mws_in_roi.geometry.is_empty]
-    mws_in_roi = mws_in_roi[mws_in_roi.geometry.is_valid]
-    mws_in_roi = mws_in_roi[mws_in_roi.geometry.notna()]
+    # Step 3: Drop empty/invalid geometries
     mws_in_roi = fix_invalid_geometry_in_gdf(mws_in_roi)
-
     mws_in_roi = mws_in_roi[
-        mws_in_roi.geometry.apply(
-            lambda g: g is not None
-            and not g.is_empty
-            and g.bounds[0] <= g.bounds[2]
-            and g.bounds[1] <= g.bounds[3]
-        )
+        mws_in_roi.geometry.notna()
+        & ~mws_in_roi.geometry.is_empty
+        & mws_in_roi.geometry.is_valid
     ]
 
     print(f"Final valid MWS connectivity: {len(mws_in_roi)}")
