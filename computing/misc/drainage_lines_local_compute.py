@@ -76,7 +76,7 @@ def clip_drainage_lines(
     _ = self, asset_folder, gee_account_id, app_type
 
     if state and district and block:
-        asset_suffix = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}"
+        asset_suffix = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_25may"
         layer_name = f"drainage_lines_{asset_suffix}"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
