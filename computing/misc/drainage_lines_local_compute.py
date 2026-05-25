@@ -1,5 +1,6 @@
 import os
 import geopandas as gpd
+from shapely.geometry import box
 from nrm_app.celery import app
 from utilities.gee_utils import valid_gee_text
 from computing.local_compute_helper import (
@@ -97,10 +98,9 @@ def clip_drainage_lines(
     if not os.path.exists(DRAINAGE_LINES_PATH):
         raise FileNotFoundError(f"PAN INDIA drainage lines file not found at {DRAINAGE_LINES_PATH}")
 
-    drainage_gdf = read_validated_vector_file(
-        DRAINAGE_LINES_PATH,
-        f"PAN INDIA drainage lines file has no valid geometries",
-    )
+    bounds = watersheds_gdf.geometry.total_bounds
+    bbox_geom = box(*bounds)
+    drainage_gdf = gpd.read_file(DRAINAGE_LINES_PATH, bbox=bbox_geom)
 
     result_gdf = _compute_drainage_lines_for_watersheds(
         watersheds_gdf=watersheds_gdf,
