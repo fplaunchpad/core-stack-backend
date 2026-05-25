@@ -709,7 +709,16 @@ def save_layer_info_to_db(
         )
 
     print(f"Saved layer info (id={layer_obj.id}, version={layer_obj.layer_version})")
-    return layer_obj.id
+    layer_id = layer_obj.id
+
+    # Sync mode: signal skips inline STAC; run when layer is saved already synced.
+    if sync_to_geoserver:
+        from computing.stac_trigger import layer_generation_sync_mode
+
+        if layer_generation_sync_mode():
+            update_layer_sync_status(layer_id, sync_to_geoserver=True)
+
+    return layer_id
 
 
 def get_existing_end_year(dataset_name, layer_name):
@@ -1007,9 +1016,30 @@ def update_layer_sync_status(
         return layer_id
 
     try:
-        layer_obj = Layer.objects.filter(id=layer_id).first()
+        layer_obj = (
+            Layer.objects.select_related(
+                "state", "district", "block", "dataset"
+            )
+            .filter(id=layer_id)
+            .first()
+        )
         if layer_obj is None:
             return None
+
+        if sync_to_geoserver and is_stac_specs_generated is None:
+            from computing.stac_trigger import (
+                append_stac_result,
+                layer_generation_sync_mode,
+                resolve_mapping_from_layer,
+                trigger_stac_for_layer,
+            )
+
+            mapping = resolve_mapping_from_layer(layer_obj)
+            if mapping and layer_generation_sync_mode():
+                stac_entry = trigger_stac_for_layer(layer_obj, mapping)
+                append_stac_result(stac_entry)
+                # Mark attempted so the post_save signal does not re-run STAC.
+                is_stac_specs_generated = True
 
         update_fields = []
         if sync_to_geoserver is not None:
@@ -1019,8 +1049,7 @@ def update_layer_sync_status(
             layer_obj.is_stac_specs_generated = is_stac_specs_generated
             update_fields.append("is_stac_specs_generated")
 
-        # `save(update_fields=...)` fires the post_save signal so the STAC
-        # auto-trigger handler in `computing.signals` can pick up the flip.
+        # Async mode: save fires `computing.signals` to queue STAC on Celery.
         if update_fields:
             layer_obj.save(update_fields=update_fields)
             print(

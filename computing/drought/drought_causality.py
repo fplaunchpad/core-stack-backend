@@ -10,7 +10,11 @@ import numpy as np
 
 from gee_computing.models import GEEAccount
 from nrm_app.celery import app
-from computing.utils import sync_layer_to_geoserver, save_layer_info_to_db
+from computing.utils import (
+    sync_layer_to_geoserver,
+    save_layer_info_to_db,
+    update_layer_sync_status,
+)
 from utilities.gee_utils import (
     ee_initialize,
     valid_gee_text,
@@ -648,15 +652,16 @@ def drought_causality(
         )
         print(f"Synced aggregated data to GeoServer: {sync_res}")
         if sync_res["status_code"] == 201:
-            save_layer_info_to_db(
+            layer_id = save_layer_info_to_db(
                 state,
                 district,
                 block,
                 layer_name=geo_filename,
                 asset_id="",
                 dataset_name="Drought Causality",
-                sync_to_geoserver=True,
             )
+            if layer_id:
+                update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
             layer_at_geoserver = True
     except Exception as e:
         print(f"Error syncing aggregated data to GeoServer: {e}")

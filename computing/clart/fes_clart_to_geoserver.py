@@ -15,6 +15,7 @@ from utilities.gee_utils import (
 from nrm_app.celery import app
 from computing.utils import (
     get_layer_object,
+    update_layer_sync_status,
 )
 from computing.models import *
 
@@ -46,11 +47,10 @@ def generate_fes_clart_layer(self, state, district, block, file_path, gee_accoun
                 "clart", description + "_fes", description, "testClart"
             )
             if res:
-                Layer.objects.filter(id=layer_obj.pk).update(
-                    is_sync_to_geoserver=True,
-                    misc={"override_asset_id": asset_id},
-                    is_override=True,
-                )
+                layer_obj.misc = {"override_asset_id": asset_id}
+                layer_obj.is_override = True
+                layer_obj.save(update_fields=["misc", "is_override"])
+                update_layer_sync_status(layer_obj.pk, sync_to_geoserver=True)
             return res
     except Exception as e:
         raise e

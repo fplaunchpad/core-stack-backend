@@ -28,9 +28,7 @@ from utilities.constants import (
     SOI_TEHSIL,
 )
 from computing.utils import save_layer_info_to_db, update_layer_sync_status
-from computing.stac_trigger import layer_generation_sync_mode, trigger_stac_collection
-
-ADMIN_BOUNDARY_STAC_LAYER_NAME = "admin_boundaries_vector"
+from computing.stac_trigger import enrich_task_return
 
 
 TASK_NAME = "generate_tehsil_shape_file_data"
@@ -147,44 +145,16 @@ def generate_tehsil_shape_file_data(self, state, district, block, gee_account_id
             response=res,
             **ctx,
         )
-        stac_entry = None
         if res["status_code"] == 201 and layer_id:
-            if layer_generation_sync_mode():
-                stac_entry = trigger_stac_collection(
-                    layer_type="vector",
-                    state=state,
-                    district=district,
-                    block=block,
-                    layer_name=ADMIN_BOUNDARY_STAC_LAYER_NAME,
-                    asset_id=asset_id,
-                    layer_id=layer_id,
-                    geoserver_layer_name=geoserver_store,
-                )
-                log_task_step(
-                    TASK_NAME,
-                    "stac_sync_complete",
-                    stac_success=stac_entry.get("success"),
-                    stac_item_ids=stac_entry.get("stac_item_ids"),
-                    **ctx,
-                )
-                update_layer_sync_status(
-                    layer_id=layer_id,
-                    sync_to_geoserver=True,
-                    is_stac_specs_generated=bool(stac_entry.get("success")),
-                )
-            else:
-                # Async layer-gen mode: signal queues STAC on Celery when sync flips True.
-                update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
-                log_task_step(TASK_NAME, "stac_async_queued_via_signal", **ctx)
+            update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
             layer_at_geoserver = True
 
         log_task_step(TASK_NAME, "complete", layer_at_geoserver=layer_at_geoserver, **ctx)
-        return {
-            "success": layer_at_geoserver,
-            "asset_id": asset_id,
-            "layer_id": layer_id,
-            "stac": [stac_entry] if stac_entry else [],
-        }
+        return enrich_task_return(
+            layer_at_geoserver,
+            asset_id=asset_id,
+            layer_id=layer_id,
+        )
     except Exception as exc:
         log_task_failure(TASK_NAME, exc, **ctx)
         raise

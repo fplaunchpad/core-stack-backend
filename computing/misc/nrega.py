@@ -33,7 +33,7 @@ import ee
 import numpy as np
 import shutil
 
-from computing.STAC_specs import generate_STAC_layerwise
+from computing.stac_trigger import enrich_task_return
 
 NREGA_S3_REGION = "ap-south-1"
 TASK_NAME = "clip_nrega_district_block"
@@ -126,6 +126,8 @@ def clip_nrega_district_block(self, state, district, block, gee_account_id):
     """
     ee_initialize(gee_account_id)
     layer_at_geoserver = False
+    layer_id = None
+    nrega_asset_id = None
 
     try:
         gdf = read_nrega_district_geojson(state, district)
@@ -138,7 +140,7 @@ def clip_nrega_district_block(self, state, district, block, gee_account_id):
             block=block,
             bucket=NREGA_BUCKET,
         )
-        return layer_at_geoserver
+        return enrich_task_return(layer_at_geoserver)
 
     # Ensure CRS
     if gdf.crs is None:
@@ -254,26 +256,23 @@ def clip_nrega_district_block(self, state, district, block, gee_account_id):
         )
 
         make_asset_public(nrega_asset_id)
-        res = push_shape_to_geoserver(output_dir, workspace="nrega_assets")
+        geoserver_store = (
+            f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}"
+        )
+        res = push_shape_to_geoserver(
+            output_dir,
+            store_name=geoserver_store,
+            workspace="nrega_assets",
+            layer_name=geoserver_store,
+        )
 
         if res["status_code"] == 201 and layer_id:
-
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
-
-            layer_STAC_generated = generate_STAC_layerwise.generate_vector_stac(
-                state=state,
-                district=district,
-                block=block,
-                layer_name="nrega_vector",
-            )
-
-            update_layer_sync_status(
-                layer_id=layer_id,
-                is_stac_specs_generated=layer_STAC_generated,
-            )
-
             layer_at_geoserver = True
             print("nrega data sync to geoserver")
 
-    layer_at_geoserver = True
-    return layer_at_geoserver
+    return enrich_task_return(
+        layer_at_geoserver,
+        asset_id=nrega_asset_id,
+        layer_id=layer_id,
+    )

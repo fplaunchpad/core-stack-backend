@@ -88,6 +88,8 @@ from .misc.facilities_proximity import generate_facilities_proximity_task
 from .misc.digital_elevation_model import generate_dem_layer
 from .misc.canal_layer import canal_vector
 from computing.stac_trigger import (
+    collect_stac_from_tasks,
+    consume_stac_results,
     format_stac_api_response,
     layer_generation_sync_mode,
     parse_layer_generation_specs,
@@ -160,7 +162,7 @@ def _parse_zoi_request_dates(request):
 
 
 def _task_started_response(
-    message, task=None, asset_id=None, asset_ids=None, stac=None
+    message, task=None, tasks=None, asset_id=None, asset_ids=None, stac=None
 ):
     payload = {
         "status": "initiated",
@@ -170,16 +172,23 @@ def _task_started_response(
     if task is not None and getattr(task, "id", None):
         payload["task_id"] = task.id
 
-    if stac is None and task is not None:
+    if stac is None:
         try:
-            if task.ready() and not task.failed():
+            if tasks:
+                result_stac = collect_stac_from_tasks(tasks)
+            elif task is not None and task.ready() and not task.failed():
                 result_stac = stac_from_task_result(task.result)
-                if result_stac is not None:
-                    stac = result_stac
-                    if layer_generation_sync_mode():
-                        payload["status"] = "completed"
-                        payload["Success"] = message
-                        payload["message"] = message
+                if result_stac is None:
+                    result_stac = consume_stac_results() or None
+            else:
+                result_stac = consume_stac_results() or None
+
+            if result_stac:
+                stac = result_stac
+                if layer_generation_sync_mode():
+                    payload["status"] = "completed"
+                    payload["Success"] = message
+                    payload["message"] = message
         except Exception:
             pass
 
@@ -484,10 +493,15 @@ def lulc_v2_river_basin(request):
         basin_object_id = request.data.get("basin_object_id")
         start_year = request.data.get("start_year")
         end_year = request.data.get("end_year")
-        lulc_river_basin_v2.apply_async(
+        task = lulc_river_basin_v2.apply_async(
             args=[basin_object_id, start_year, end_year], queue="nrm"
         )
-        return Response({"Success": "lulc_v2_river_basin"}, status=status.HTTP_200_OK)
+        message = (
+            "Completed"
+            if layer_generation_sync_mode()
+            else "lulc_v2_river_basin initiated"
+        )
+        return _task_started_response(message, task=task)
     except Exception as e:
         return layer_api_error_response("lulc_v2_river_basin", e, request=request)
 
@@ -511,10 +525,15 @@ def lulc_v3_river_basin(request):
         start_year = request.data.get("start_year")
         end_year = request.data.get("end_year")
         gee_account_id = request.data.get("gee_account_id")
-        lulc_river_basin_v3.apply_async(
+        task = lulc_river_basin_v3.apply_async(
             args=[basin_object_id, start_year, end_year, gee_account_id], queue="nrm"
         )
-        return Response({"Success": "lulc_v3_river_basin"}, status=status.HTTP_200_OK)
+        message = (
+            "Completed"
+            if layer_generation_sync_mode()
+            else "lulc_v3_river_basin initiated"
+        )
+        return _task_started_response(message, task=task)
     except Exception as e:
         return layer_api_error_response("lulc_v3_river_basin", e, request=request)
 
@@ -999,44 +1018,51 @@ def tree_health_raster(request):
         start_year = request.data.get("start_year")
         end_year = request.data.get("end_year")
         gee_account_id = request.data.get("gee_account_id")
-        tree_health_ccd_raster.apply_async(
-            kwargs={
-                "state": state,
-                "district": district,
-                "block": block,
-                "start_year": start_year,
-                "end_year": end_year,
-                "gee_account_id": gee_account_id,
-            },
-            queue="nrm",
-        )
-        tree_health_ch_raster.apply_async(
-            kwargs={
-                "state": state,
-                "district": district,
-                "block": block,
-                "start_year": start_year,
-                "end_year": end_year,
-                "gee_account_id": gee_account_id,
-            },
-            queue="nrm",
-        )
-        tree_health_overall_change_raster.apply_async(
-            kwargs={
-                "state": state,
-                "district": district,
-                "block": block,
-                "start_year": start_year,
-                "end_year": end_year,
-                "gee_account_id": gee_account_id,
-            },
-            queue="nrm",
-        )
+        th_tasks = [
+            tree_health_ccd_raster.apply_async(
+                kwargs={
+                    "state": state,
+                    "district": district,
+                    "block": block,
+                    "start_year": start_year,
+                    "end_year": end_year,
+                    "gee_account_id": gee_account_id,
+                },
+                queue="nrm",
+            ),
+            tree_health_ch_raster.apply_async(
+                kwargs={
+                    "state": state,
+                    "district": district,
+                    "block": block,
+                    "start_year": start_year,
+                    "end_year": end_year,
+                    "gee_account_id": gee_account_id,
+                },
+                queue="nrm",
+            ),
+            tree_health_overall_change_raster.apply_async(
+                kwargs={
+                    "state": state,
+                    "district": district,
+                    "block": block,
+                    "start_year": start_year,
+                    "end_year": end_year,
+                    "gee_account_id": gee_account_id,
+                },
+                queue="nrm",
+            ),
+        ]
         asset_ids = layer_assets.tree_health_raster_asset_ids(
             state, district, block, start_year, end_year
         )
+        message = (
+            "Completed"
+            if layer_generation_sync_mode()
+            else "tree_health task initiated"
+        )
         return _task_started_response(
-            "tree_health task initiated", asset_ids=asset_ids
+            message, tasks=th_tasks, asset_ids=asset_ids
         )
     except Exception as e:
         return layer_api_error_response("tree_health_raster", e, request=request)
@@ -1054,44 +1080,49 @@ def tree_health_vector(request):
         end_year = request.data.get("end_year")
         gee_account_id = request.data.get("gee_account_id")
 
-        tree_health_ch_vector.apply_async(
-            kwargs={
-                "state": state,
-                "district": district,
-                "block": block,
-                "start_year": start_year,
-                "end_year": end_year,
-                "gee_account_id": gee_account_id,
-            },
-            queue="nrm",
-        )
-
-        tree_health_ccd_vector.apply_async(
-            kwargs={
-                "state": state,
-                "district": district,
-                "block": block,
-                "start_year": start_year,
-                "end_year": end_year,
-                "gee_account_id": gee_account_id,
-            },
-            queue="nrm",
-        )
-
-        tree_health_overall_change_vector.apply_async(
-            kwargs={
-                "state": state,
-                "district": district,
-                "block": block,
-                "gee_account_id": gee_account_id,
-            },
-            queue="nrm",
-        )
+        th_tasks = [
+            tree_health_ch_vector.apply_async(
+                kwargs={
+                    "state": state,
+                    "district": district,
+                    "block": block,
+                    "start_year": start_year,
+                    "end_year": end_year,
+                    "gee_account_id": gee_account_id,
+                },
+                queue="nrm",
+            ),
+            tree_health_ccd_vector.apply_async(
+                kwargs={
+                    "state": state,
+                    "district": district,
+                    "block": block,
+                    "start_year": start_year,
+                    "end_year": end_year,
+                    "gee_account_id": gee_account_id,
+                },
+                queue="nrm",
+            ),
+            tree_health_overall_change_vector.apply_async(
+                kwargs={
+                    "state": state,
+                    "district": district,
+                    "block": block,
+                    "gee_account_id": gee_account_id,
+                },
+                queue="nrm",
+            ),
+        ]
         asset_ids = layer_assets.tree_health_vector_asset_ids(
             state, district, block, int(start_year), int(end_year)
         )
+        message = (
+            "Completed"
+            if layer_generation_sync_mode()
+            else "tree_health vector task initiated"
+        )
         return _task_started_response(
-            "Overall_change_vector task initiated", asset_ids=asset_ids
+            message, tasks=th_tasks, asset_ids=asset_ids
         )
     except Exception as e:
         return layer_api_error_response("tree_health_vector", e, request=request)
@@ -2144,12 +2175,21 @@ def generate_fabdem_layer(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_dem_layer.apply_async(
+        task = generate_dem_layer.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
-        return Response(
-            {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
+        asset_id = layer_assets.mws_asset_id(
+            state,
+            district,
+            block,
+            "dem_" + valid_gee_text(district) + "_" + valid_gee_text(block),
         )
+        message = (
+            "Completed"
+            if layer_generation_sync_mode()
+            else "Successfully initiated"
+        )
+        return _task_started_response(message, task=task, asset_id=asset_id)
     except Exception as e:
         print(
             f"Exception in generate DEM raster and vector layer for {district} - {block}:: ",
@@ -2167,12 +2207,15 @@ def generate_canal_vector(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        canal_vector.apply_async(
+        task = canal_vector.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
-        return Response(
-            {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
+        message = (
+            "Completed"
+            if layer_generation_sync_mode()
+            else "Successfully initiated"
         )
+        return _task_started_response(message, task=task)
     except Exception as e:
         print(
             f"Exception in generate canal vector layer for {district} - {block}:: ", e

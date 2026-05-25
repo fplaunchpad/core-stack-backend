@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import contextvars
+import logging
 from typing import Any
 
 from django.conf import settings
 
 from computing.layer_asset_ids import resolve_asset_id_field
+
+log = logging.getLogger(__name__)
+
+_STAC_QUEUE = "nrm"
+
+# Per-request/task accumulator for STAC entries (read in API via consume_stac_results).
+_stac_results_context: contextvars.ContextVar[list[dict[str, Any]] | None] = (
+    contextvars.ContextVar("stac_results", default=None)
+)
 
 # Enforced for all API / signal / Celery STAC runs (never write STAC to production S3).
 STAC_UPLOAD_TO_S3 = False
@@ -16,6 +27,153 @@ STAC_OVERWRITE_METADATA = True
 def layer_generation_sync_mode() -> bool:
     """Same flag as layer-generation APIs (``LAYER_GENERATION_SYNC_MODE``)."""
     return bool(getattr(settings, "LAYER_GENERATION_SYNC_MODE", False))
+
+
+def append_stac_result(entry: dict[str, Any]) -> None:
+    """Record a STAC entry for the current layer-generation task/request."""
+    acc = _stac_results_context.get()
+    if acc is None:
+        acc = []
+        _stac_results_context.set(acc)
+    acc.append(entry)
+
+
+def consume_stac_results() -> list[dict[str, Any]]:
+    """Return and clear STAC entries accumulated during the current context."""
+    acc = _stac_results_context.get()
+    _stac_results_context.set(None)
+    return list(acc) if acc else []
+
+
+def format_geoserver_layer_name(template: str, layer) -> str:
+    """Format ``LayerMapping.geoserver_layer_name`` for a saved Layer."""
+    from utilities.gee_utils import valid_gee_text
+
+    if not template:
+        return ""
+    misc = layer.misc or {}
+    try:
+        return template.format(
+            district=valid_gee_text(layer.district.district_name.lower()),
+            block=valid_gee_text(layer.block.tehsil_name.lower()),
+            state=valid_gee_text(layer.state.state_name.lower()),
+            start_year=str(misc.get("start_year", "") or ""),
+            end_year=str(misc.get("end_year", "") or ""),
+        )
+    except (KeyError, IndexError, AttributeError):
+        return ""
+
+
+def resolve_mapping_from_layer(layer) -> Any | None:
+    """Return the best matching LayerMapping with ``auto_stac=True`` for a Layer."""
+    from computing.models import LayerMapping
+
+    if not layer.dataset_id:
+        return None
+
+    dataset_name = (layer.dataset.name or "").strip()
+    if not dataset_name:
+        return None
+
+    candidates = list(
+        LayerMapping.objects.filter(db_dataset_name=dataset_name, auto_stac=True)
+    )
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    layer_name = (layer.layer_name or "").strip()
+    if not layer_name:
+        return None
+
+    matches = [
+        c
+        for c in candidates
+        if format_geoserver_layer_name(c.geoserver_layer_name, layer) == layer_name
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        log.warning(
+            "STAC: no LayerMapping match for layer id=%s dataset=%s name=%s",
+            layer.id,
+            dataset_name,
+            layer_name,
+        )
+        return None
+
+    log.info(
+        "STAC: %d ambiguous LayerMapping matches for layer id=%s; picking first",
+        len(matches),
+        layer.id,
+    )
+    return matches[0]
+
+
+def trigger_stac_for_layer(layer, mapping) -> dict[str, Any]:
+    """Run STAC for a Layer + LayerMapping (sync or async per env flag)."""
+    misc = layer.misc or {}
+    asset_id = layer.gee_asset_path
+    if asset_id in (None, "", "not available"):
+        asset_id = None
+
+    geoserver_layer = format_geoserver_layer_name(
+        mapping.geoserver_layer_name, layer
+    ) or None
+
+    return trigger_stac_collection(
+        layer_type=mapping.layer_type,
+        state=layer.state.state_name,
+        district=layer.district.district_name,
+        block=layer.block.tehsil_name,
+        layer_name=mapping.layer_name,
+        start_year=str(misc.get("start_year", "") or ""),
+        end_year=str(misc.get("end_year", "") or ""),
+        layer_id=layer.id,
+        asset_id=asset_id,
+        geoserver_layer_name=geoserver_layer,
+        queue=_STAC_QUEUE,
+    )
+
+
+def build_layer_task_result(
+    *,
+    success: bool,
+    asset_id: str | None = None,
+    layer_id: int | None = None,
+    stac: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Standard Celery return payload for layer-generation tasks."""
+    entries = list(stac) if stac else consume_stac_results()
+    return {
+        "success": success,
+        "asset_id": asset_id,
+        "layer_id": layer_id,
+        "stac": entries,
+    }
+
+
+def enrich_task_return(
+    result: Any,
+    *,
+    asset_id: str | None = None,
+    layer_id: int | None = None,
+) -> Any:
+    """Attach accumulated STAC results when a task returns a bool or bare value."""
+    pending = consume_stac_results()
+    if isinstance(result, dict):
+        if pending and not result.get("stac"):
+            result = {**result, "stac": pending}
+        return result
+    if pending or asset_id is not None or layer_id is not None:
+        return build_layer_task_result(
+            success=bool(result),
+            asset_id=asset_id,
+            layer_id=layer_id,
+            stac=pending or None,
+        )
+    return result
 
 
 def normalize_asset_id_list(asset_id=None, asset_ids=None) -> list[str]:
@@ -286,6 +444,7 @@ def dispatch_stac_collection_async(
     end_year: str = "",
     overwrite: bool = False,
     layer_id: int | None = None,
+    geoserver_layer_name: str | None = None,
     queue: str = "nrm",
 ):
     from computing.STAC_specs.stac_collection import generate_stac_collection_task
@@ -300,6 +459,7 @@ def dispatch_stac_collection_async(
         end_year=end_year,
         overwrite=overwrite,
         layer_id=layer_id,
+        geoserver_layer_name=geoserver_layer_name,
     )
     return generate_stac_collection_task.apply_async(kwargs=kwargs, queue=queue)
 
@@ -356,6 +516,27 @@ def stac_from_task_result(task_result: Any) -> list[dict[str, Any]] | None:
     if isinstance(stac, list):
         return stac
     return [stac]
+
+
+def collect_stac_from_tasks(tasks: list[Any]) -> list[dict[str, Any]]:
+    """Merge STAC payloads from one or more completed Celery tasks (multi-layer APIs)."""
+    merged: list[dict[str, Any]] = []
+    for task in tasks or []:
+        if task is None:
+            continue
+        try:
+            if not getattr(task, "ready", lambda: False)():
+                continue
+            if getattr(task, "failed", lambda: False)():
+                continue
+            chunk = stac_from_task_result(getattr(task, "result", None))
+            if chunk:
+                merged.extend(chunk)
+        except Exception:
+            continue
+    if not merged:
+        merged = consume_stac_results()
+    return merged
 
 
 def format_stac_api_response(stac_entries: list[dict[str, Any]]) -> dict[str, Any]:
