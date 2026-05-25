@@ -183,7 +183,7 @@ def _task_started_response(
             else:
                 result_stac = consume_stac_results() or None
 
-            if result_stac:
+            if result_stac is not None:
                 stac = result_stac
                 if layer_generation_sync_mode():
                     payload["status"] = "completed"
@@ -257,7 +257,12 @@ def generate_nrega_layer(request):
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         asset_id = layer_assets.nrega_asset_id(state, district, block)
-        return _task_started_response("Successfully initiated", task=task, asset_id=asset_id)
+        message = (
+            "Completed"
+            if layer_generation_sync_mode()
+            else "Successfully initiated"
+        )
+        return _task_started_response(message, task=task, asset_id=asset_id)
     except Exception as e:
         return layer_api_error_response("generate_nrega_layer", e, request=request)
 

@@ -7,6 +7,7 @@ from computing.utils import (
     save_layer_info_to_db,
     get_directory_size,
     update_layer_sync_status,
+    geoserver_sync_succeeded,
 )
 from utilities.constants import (
     NREGA_ASSETS_OUTPUT_DIR,
@@ -266,7 +267,7 @@ def clip_nrega_district_block(self, state, district, block, gee_account_id):
             layer_name=geoserver_store,
         )
 
-        if res["status_code"] == 201 and layer_id:
+        if geoserver_sync_succeeded(res) and layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
             layer_at_geoserver = True
             print("nrega data sync to geoserver")

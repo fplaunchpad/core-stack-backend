@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -65,15 +66,157 @@ def format_geoserver_layer_name(template: str, layer) -> str:
         return ""
 
 
-# Datasets missing from layer_mapping.csv (see layers_metadata repo).
-_DATASET_STAC_FALLBACKS: dict[str, SimpleNamespace] = {
-    "MWS": SimpleNamespace(
-        layer_name="mws_vector",
-        layer_type="vector",
-        geoserver_layer_name="mws_{district}_{block}",
+def build_stac_not_generated_entry(layer, *, reason: str | None = None) -> dict[str, Any]:
+    """Response payload when no ``LayerMapping`` / layer_mapping.csv row exists."""
+    misc = layer.misc or {}
+    asset_id = layer.gee_asset_path
+    if asset_id in (None, "", "not available"):
+        asset_id = None
+    dataset_name = (layer.dataset.name or "").strip() if layer.dataset_id else None
+    message = reason or (
+        "STAC not generated: no matching row in layer_mapping.csv "
+        f"(dataset={dataset_name!r}, layer_name={layer.layer_name!r})"
+    )
+    return {
+        "asset_id": asset_id,
+        "layer_id": layer.id,
+        "dataset_name": dataset_name,
+        "layer_name": layer.layer_name,
+        "state": layer.state.state_name,
+        "district": layer.district.district_name,
+        "block": layer.block.tehsil_name,
+        "start_year": str(misc.get("start_year", "") or ""),
+        "end_year": str(misc.get("end_year", "") or ""),
+        "success": False,
+        "stac_generated": False,
+        "message": message,
+        "error": message,
+        "upload_to_s3": STAC_UPLOAD_TO_S3,
+        "overwrite_metadata": STAC_OVERWRITE_METADATA,
+        "mode": "sync" if layer_generation_sync_mode() else "async",
+        "stac_metadata": [],
+        "stac_items": [],
+        "stac_item_ids": [],
+    }
+
+
+def _layer_mapping_csv_path() -> Path:
+    return (
+        Path(settings.BASE_DIR)
+        / "data"
+        / "STAC_specs"
+        / "input"
+        / "metadata"
+        / "layer_mapping.csv"
+    )
+
+
+def _mapping_from_csv_row(row: dict[str, Any]) -> SimpleNamespace:
+    return SimpleNamespace(
+        layer_name=(row.get("layer_name") or "").strip(),
+        layer_type=(row.get("layer_type") or "").strip(),
+        geoserver_layer_name=(row.get("geoserver_layer_name") or "").strip(),
+        geoserver_workspace_name=(row.get("geoserver_workspace_name") or "").strip(),
+        db_dataset_name=(row.get("db_dataset_name") or "").strip(),
         auto_stac=True,
-    ),
-}
+    )
+
+
+def resolve_mapping_from_csv(layer) -> SimpleNamespace | None:
+    """Resolve mapping from layer_mapping.csv when DB rows are missing."""
+    import pandas as pd
+
+    from computing.STAC_specs import constants
+
+    dataset_name = (layer.dataset.name or "").strip()
+    if not dataset_name:
+        return None
+
+    csv_path = _layer_mapping_csv_path()
+    try:
+        if csv_path.is_file():
+            df = pd.read_csv(csv_path)
+        else:
+            df = pd.read_csv(constants.LAYER_MAP_GITHUB_URL)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("STAC: could not read layer_mapping.csv: %s", exc)
+        return None
+
+    df["db_dataset_name"] = df["db_dataset_name"].astype(str).str.strip()
+    rows = df[df["db_dataset_name"] == dataset_name]
+    if rows.empty:
+        return None
+
+    saved_name = (layer.layer_name or "").strip()
+    if len(rows) == 1:
+        return _mapping_from_csv_row(rows.iloc[0].to_dict())
+
+    matches = []
+    for _, row in rows.iterrows():
+        template = (row.get("geoserver_layer_name") or "").strip()
+        if not template:
+            matches.append(row)
+            continue
+        if format_geoserver_layer_name(template, layer) == saved_name:
+            matches.append(row)
+
+    if len(matches) == 1:
+        return _mapping_from_csv_row(matches[0].to_dict())
+    if len(matches) > 1:
+        log.info(
+            "STAC: %d CSV rows for dataset=%s; picking first",
+            len(matches),
+            dataset_name,
+        )
+        return _mapping_from_csv_row(matches[0].to_dict())
+
+    log.warning(
+        "STAC: CSV rows for dataset=%s but none match layer_name=%s",
+        dataset_name,
+        saved_name,
+    )
+    return None
+
+
+def _pick_mapping_candidate(candidates: list, layer) -> Any | None:
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        only = candidates[0]
+        template = (only.geoserver_layer_name or "").strip()
+        if not template:
+            return only
+        gs_name = format_geoserver_layer_name(template, layer)
+        saved_name = (layer.layer_name or "").strip()
+        if gs_name == saved_name:
+            return only
+        log.warning(
+            "STAC: LayerMapping geoserver name %r != saved layer_name %r",
+            gs_name,
+            saved_name,
+        )
+        return None
+
+    layer_name = (layer.layer_name or "").strip()
+    if not layer_name:
+        return None
+
+    matches = [
+        c
+        for c in candidates
+        if format_geoserver_layer_name(c.geoserver_layer_name, layer) == layer_name
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        return None
+
+    log.info(
+        "STAC: %d ambiguous LayerMapping matches for layer id=%s; picking first",
+        len(matches),
+        layer.id,
+    )
+    return matches[0]
 
 
 def resolve_mapping_from_layer(layer) -> Any | None:
@@ -88,47 +231,23 @@ def resolve_mapping_from_layer(layer) -> Any | None:
         return None
 
     candidates = list(
-        LayerMapping.objects.filter(db_dataset_name=dataset_name, auto_stac=True)
-    )
-    if not candidates:
-        fallback = _DATASET_STAC_FALLBACKS.get(dataset_name)
-        if fallback is not None:
-            log.info(
-                "STAC: using built-in mapping for dataset=%s layer id=%s",
-                dataset_name,
-                layer.id,
-            )
-            return fallback
-        return None
-    if len(candidates) == 1:
-        return candidates[0]
-
-    layer_name = (layer.layer_name or "").strip()
-    if not layer_name:
-        return None
-
-    matches = [
-        c
-        for c in candidates
-        if format_geoserver_layer_name(c.geoserver_layer_name, layer) == layer_name
-    ]
-    if len(matches) == 1:
-        return matches[0]
-    if not matches:
-        log.warning(
-            "STAC: no LayerMapping match for layer id=%s dataset=%s name=%s",
-            layer.id,
-            dataset_name,
-            layer_name,
+        LayerMapping.objects.filter(
+            db_dataset_name__iexact=dataset_name, auto_stac=True
         )
-        return None
-
-    log.info(
-        "STAC: %d ambiguous LayerMapping matches for layer id=%s; picking first",
-        len(matches),
-        layer.id,
     )
-    return matches[0]
+    picked = _pick_mapping_candidate(candidates, layer)
+    if picked is not None:
+        return picked
+
+    csv_mapping = resolve_mapping_from_csv(layer)
+    if csv_mapping is not None:
+        log.info(
+            "STAC: resolved mapping from layer_mapping.csv for dataset=%s",
+            dataset_name,
+        )
+        return csv_mapping
+
+    return None
 
 
 def trigger_stac_for_layer(layer, mapping) -> dict[str, Any]:

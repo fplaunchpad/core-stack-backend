@@ -1038,6 +1038,7 @@ def update_layer_sync_status(
         if sync_to_geoserver and is_stac_specs_generated is None:
             from computing.stac_trigger import (
                 append_stac_result,
+                build_stac_not_generated_entry,
                 resolve_mapping_from_layer,
                 trigger_stac_for_layer,
             )
@@ -1048,6 +1049,8 @@ def update_layer_sync_status(
                 append_stac_result(stac_entry)
                 # Mark attempted so the post_save signal does not re-run STAC.
                 is_stac_specs_generated = True
+            else:
+                append_stac_result(build_stac_not_generated_entry(layer_obj))
 
         update_fields = []
         if sync_to_geoserver is not None:
