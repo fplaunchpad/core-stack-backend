@@ -1,16 +1,11 @@
 """Mission Antyodaya tehsil clipping from the pan-India local GeoPackage.
 
-Runtime contract:
-
-- request names may be spaces or snake_case; stored names are resolved from the
-  GeoPackage before clipping
 - local output is always written first
 - GeoServer publish is enabled by default and can be disabled per request;
   failure is reported without breaking local generation
 
 The source GeoPackage should have an attribute index on
-``(state_name, district_name, TEHSIL)``. The task creates it once if missing,
-which keeps reads sub-second for normal tehsil clips on the local server.
+``(state_name, district_name, TEHSIL)``. The task creates it once if missing.
 """
 
 from __future__ import annotations
