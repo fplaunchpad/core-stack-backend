@@ -76,8 +76,7 @@ def clip_drainage_lines(
     _ = self, asset_folder, gee_account_id, app_type
 
     if state and district and block:
-        asset_suffix = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_25may"
-        layer_name = f"drainage_lines_{asset_suffix}"
+        layer_name = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_25may"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -88,7 +87,7 @@ def clip_drainage_lines(
     else:
         proj_obj = Project.objects.get(pk=proj_id)
         state = proj_obj.name
-        layer_name = f"drainage_lines_{asset_suffix}"
+        layer_name = asset_suffix
         watersheds_gdf = read_validated_vector_file(
             roi_path,
             f"ROI file has no valid geometries: {roi_path}",
@@ -139,7 +138,7 @@ def clip_drainage_lines(
                 state=state,
                 district=district,
                 block=block,
-                layer_name=asset_suffix,
+                layer_name=layer_name,
                 asset_id=asset_id,
                 dataset_name="Drainage",
             )
