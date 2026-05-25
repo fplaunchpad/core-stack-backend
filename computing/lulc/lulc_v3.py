@@ -20,10 +20,12 @@ from utilities.gee_utils import (
 )
 from nrm_app.celery import app
 from .cropping_frequency import *
+from computing.stac_trigger import enrich_task_return
 from computing.utils import (
     save_layer_info_to_db,
     update_layer_sync_status,
     get_layer_object,
+    geoserver_sync_succeeded,
 )
 
 from utilities.constants import PAN_INDIA_RIVER_BASIN_LULC_V3_BASE_PATH
@@ -174,6 +176,8 @@ def clip_lulc_v3(
                 layer_name = f"LULC_{s_year}_{e_year}_{asset_suffix}{suff}"
             if is_gee_asset_exists(final_output_assetid_array_new[i]):
                 if state and district and block:
+                    period_start = 2000 + int(s_year)
+                    period_end = 2000 + int(e_year)
                     layer_id = save_layer_info_to_db(
                         state,
                         district,
@@ -182,8 +186,8 @@ def clip_lulc_v3(
                         asset_id=final_output_assetid_array_new[i],
                         dataset_name=workspace,
                         misc={
-                            "start_year": start_year,
-                            "end_year": end_year,
+                            "start_year": period_start,
+                            "end_year": period_end,
                         },
                     )
                     layer_ids.append(layer_id)
@@ -205,7 +209,10 @@ def clip_lulc_v3(
         asset_suffix,
     )
 
-    return layer_at_geoserver
+    return enrich_task_return(
+        layer_at_geoserver,
+        asset_ids=final_output_assetid_array_new or None,
+    )
 
 
 def sync_lulc_to_gcs(
@@ -237,6 +244,7 @@ def sync_lulc_to_geoserver(
     print("Syncing lulc to geoserver")
     lulc_workspaces = ["LULC_level_1", "LULC_level_2", "LULC_level_3"]
     layer_at_geoserver = False
+    layer_idx = 0
     for i in range(0, len(final_output_filename_array_new)):
         name_arr = final_output_filename_array_new[i].split(
             "_20"
@@ -266,8 +274,13 @@ def sync_lulc_to_geoserver(
             res = sync_raster_gcs_to_geoserver(
                 workspace, gcs_file_name, layer_name, style
             )
-            if res and layer_ids:
-                update_layer_sync_status(layer_id=layer_ids[i], sync_to_geoserver=True)
+            if geoserver_sync_succeeded(res) and layer_ids and layer_idx < len(
+                layer_ids
+            ):
+                update_layer_sync_status(
+                    layer_id=layer_ids[layer_idx], sync_to_geoserver=True
+                )
                 print("geoserver flag is updated")
                 layer_at_geoserver = True
+            layer_idx += 1
     return layer_at_geoserver

@@ -47,6 +47,16 @@ def consume_stac_results() -> list[dict[str, Any]]:
     return list(acc) if acc else []
 
 
+def _stac_year_fragment(year_val) -> str:
+    """Two-digit year for GeoServer names (LULC uses 17_18 not 2017_2018)."""
+    if year_val in (None, ""):
+        return ""
+    y = int(str(year_val).strip())
+    if y >= 1000:
+        return str(y % 100).zfill(2)
+    return str(y).zfill(2)
+
+
 def format_geoserver_layer_name(template: str, layer) -> str:
     """Format ``LayerMapping.geoserver_layer_name`` for a saved Layer."""
     from utilities.gee_utils import valid_gee_text
@@ -59,8 +69,8 @@ def format_geoserver_layer_name(template: str, layer) -> str:
             district=valid_gee_text(layer.district.district_name.lower()),
             block=valid_gee_text(layer.block.tehsil_name.lower()),
             state=valid_gee_text(layer.state.state_name.lower()),
-            start_year=str(misc.get("start_year", "") or ""),
-            end_year=str(misc.get("end_year", "") or ""),
+            start_year=_stac_year_fragment(misc.get("start_year")),
+            end_year=_stac_year_fragment(misc.get("end_year")),
         )
     except (KeyError, IndexError, AttributeError):
         return ""
@@ -297,6 +307,7 @@ def enrich_task_return(
     result: Any,
     *,
     asset_id: str | None = None,
+    asset_ids: list[str] | None = None,
     layer_id: int | None = None,
 ) -> Any:
     """Attach accumulated STAC results when a task returns a bool or bare value."""
@@ -304,14 +315,19 @@ def enrich_task_return(
     if isinstance(result, dict):
         if pending and not result.get("stac"):
             result = {**result, "stac": pending}
+        if asset_ids and not result.get("asset_ids"):
+            result = {**result, "asset_ids": asset_ids}
         return result
-    if pending or asset_id is not None or layer_id is not None:
-        return build_layer_task_result(
+    if pending or asset_id is not None or asset_ids or layer_id is not None:
+        payload = build_layer_task_result(
             success=bool(result),
             asset_id=asset_id,
             layer_id=layer_id,
             stac=pending or None,
         )
+        if asset_ids:
+            payload["asset_ids"] = asset_ids
+        return payload
     return result
 
 
