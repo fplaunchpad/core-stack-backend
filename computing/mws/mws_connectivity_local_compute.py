@@ -22,8 +22,12 @@ from computing.utils import (
     fix_invalid_geometry_in_gdf,
 )
 
-MWS_CONNECTIVITY_PATH = PROJECT_ROOT / "data/layers/mws_connectivity/Pan_India_mws_connectivity.geojson"
-LOCAL_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/layers/mws_connectivity/mws_connectivity_local"
+MWS_CONNECTIVITY_PATH = (
+    PROJECT_ROOT / "data/layers/mws_connectivity/Pan_India_mws_connectivity.geojson"
+)
+LOCAL_OUTPUT_BASE_DIR = (
+    PROJECT_ROOT / "data/layers/mws_connectivity/mws_connectivity_local"
+)
 GEOSERVER_WORKSPACE = "mws_connectivity"
 
 from shapely.ops import unary_union
@@ -96,9 +100,7 @@ def mws_connectivity_vector(
     Orchestrates the local MWS connectivity vector generation.
     """
     if state and district and block:
-        layer_name = (
-            f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_mws_connectivity"
-        )
+        layer_name = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_mws_connectivity_25may"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -169,4 +171,3 @@ def mws_connectivity_vector(
             print("Sync to GeoServer flag updated for MWS connectivity vector")
 
     return True
-
