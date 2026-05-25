@@ -5,8 +5,8 @@ Runtime contract:
 - request names may be spaces or snake_case; stored names are resolved from the
   GeoPackage before clipping
 - local output is always written first
-- GeoServer publish is optional and failure is reported without breaking local
-  generation
+- GeoServer publish is enabled by default and can be disabled per request;
+  failure is reported without breaking local generation
 
 The source GeoPackage should have an attribute index on
 ``(state_name, district_name, TEHSIL)``. The task creates it once if missing,
@@ -175,11 +175,13 @@ def _publish_to_geoserver(gpkg_path: Path, layer_name: str, overwrite: bool) -> 
         }
 
 
-def generate_antyodaya_layer(
+@app.task(bind=True)
+def generate_antyodaya_layer_task(
+    self,
     state: str,
     district: str,
     block: str,
-    sync_to_geoserver: bool = False,
+    sync_to_geoserver: bool = True,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Clip one state/district/TEHSIL from the local pan-India Antyodaya GPKG."""
@@ -217,21 +219,3 @@ def generate_antyodaya_layer(
         "geoserver": geoserver,
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
-
-
-@app.task(bind=True)
-def generate_antyodaya_layer_task(
-    self,
-    state: str,
-    district: str,
-    block: str,
-    sync_to_geoserver: bool = False,
-    overwrite: bool = False,
-):
-    return generate_antyodaya_layer(
-        state=state,
-        district=district,
-        block=block,
-        sync_to_geoserver=sync_to_geoserver,
-        overwrite=overwrite,
-    )
