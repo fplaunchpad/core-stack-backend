@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+from types import SimpleNamespace
 from typing import Any
 
 from django.conf import settings
@@ -64,6 +65,17 @@ def format_geoserver_layer_name(template: str, layer) -> str:
         return ""
 
 
+# Datasets missing from layer_mapping.csv (see layers_metadata repo).
+_DATASET_STAC_FALLBACKS: dict[str, SimpleNamespace] = {
+    "MWS": SimpleNamespace(
+        layer_name="mws_vector",
+        layer_type="vector",
+        geoserver_layer_name="mws_{district}_{block}",
+        auto_stac=True,
+    ),
+}
+
+
 def resolve_mapping_from_layer(layer) -> Any | None:
     """Return the best matching LayerMapping with ``auto_stac=True`` for a Layer."""
     from computing.models import LayerMapping
@@ -79,6 +91,14 @@ def resolve_mapping_from_layer(layer) -> Any | None:
         LayerMapping.objects.filter(db_dataset_name=dataset_name, auto_stac=True)
     )
     if not candidates:
+        fallback = _DATASET_STAC_FALLBACKS.get(dataset_name)
+        if fallback is not None:
+            log.info(
+                "STAC: using built-in mapping for dataset=%s layer id=%s",
+                dataset_name,
+                layer.id,
+            )
+            return fallback
         return None
     if len(candidates) == 1:
         return candidates[0]

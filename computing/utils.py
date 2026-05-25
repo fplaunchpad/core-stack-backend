@@ -73,6 +73,15 @@ def convert_to_zip(dir_name, file_type):
         return shutil.make_archive(dir_name, "zip", dir_name + "/")
 
 
+def geoserver_sync_succeeded(res) -> bool:
+    """True when a GeoServer push/sync response indicates success."""
+    if isinstance(res, dict):
+        return res.get("status_code") in (200, 201)
+    if isinstance(res, str):
+        return res not in ("No features in FeatureCollection", "")
+    return bool(res)
+
+
 def push_shape_to_geoserver(
     path, store_name=None, workspace=None, layer_name=None, file_type="shp"
 ):
@@ -1029,13 +1038,12 @@ def update_layer_sync_status(
         if sync_to_geoserver and is_stac_specs_generated is None:
             from computing.stac_trigger import (
                 append_stac_result,
-                layer_generation_sync_mode,
                 resolve_mapping_from_layer,
                 trigger_stac_for_layer,
             )
 
             mapping = resolve_mapping_from_layer(layer_obj)
-            if mapping and layer_generation_sync_mode():
+            if mapping:
                 stac_entry = trigger_stac_for_layer(layer_obj, mapping)
                 append_stac_result(stac_entry)
                 # Mark attempted so the post_save signal does not re-run STAC.

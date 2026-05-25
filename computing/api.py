@@ -361,7 +361,12 @@ def generate_mws_layer(request):
             + valid_gee_text(block.lower())
             + "_uid",
         )
-        return _task_started_response("Successfully initiated", task=task, asset_id=asset_id)
+        message = (
+            "Completed"
+            if layer_generation_sync_mode()
+            else "Successfully initiated"
+        )
+        return _task_started_response(message, task=task, asset_id=asset_id)
     except Exception as e:
         return layer_api_error_response("generate_mws_layer", e, request=request)
 

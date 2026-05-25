@@ -44,6 +44,19 @@ def _clean_csv_value(v, default=None):
 
 _STAC_DATA = os.path.join(BASE_DIR, "data", "STAC_specs")
 
+# Layers not yet in layer_mapping.csv (e.g. MWS tehsil UID polygons).
+_BUILTIN_STAC_LAYER_MAPS = {
+    "mws_vector": {
+        "display_name": "MWS",
+        "geoserver_workspace_name": "mws",
+        "geoserver_layer_name": "mws_{district}_{block}",
+        "ee_layer_name": "filtered_mws",
+        "style_file_url": "",
+        "theme": "hydrology, mws",
+        "spatial_resolution_in_meters": None,
+    },
+}
+
 JAVA_TYPE_MAP = {
     "java.lang.String": "object",
     "java.lang.Integer": "int64",
@@ -336,6 +349,21 @@ class MetadataProvider:
     def get_layer_mapping(
         self, layer_name, district, block, start_year="", overwrite_metadata=False
     ):
+        builtin = _BUILTIN_STAC_LAYER_MAPS.get(layer_name)
+        if builtin is not None:
+            gs_layer = builtin["geoserver_layer_name"].format(
+                district=district, block=block, start_year=start_year, end_year=""
+            )
+            return {
+                "workspace": builtin["geoserver_workspace_name"],
+                "layer_name": gs_layer,
+                "style_file_url": builtin.get("style_file_url", ""),
+                "display_name": builtin.get("display_name", layer_name),
+                "ee_layer_name": builtin.get("ee_layer_name", ""),
+                "gsd": builtin.get("spatial_resolution_in_meters"),
+                "theme": builtin.get("theme", ""),
+            }
+
         path = self.config.layer_map_csv
         if os.path.exists(path) and not overwrite_metadata:
             df = pd.read_csv(path)
