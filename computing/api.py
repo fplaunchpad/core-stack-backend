@@ -60,7 +60,8 @@ from .terrain_descriptor.terrain_raster_fabdem import (
 from .terrain_descriptor.terrain_raster_fabdem_local import (
     generate_terrain_raster_clip as generate_terrain_raster_clip_local_task,
 )
-from computing.misc.drainage_lines import clip_drainage_lines
+from computing.misc.drainage_lines import clip_drainage_lines as clip_drainage_lines_gee_task
+from computing.misc.drainage_lines_local_compute import clip_drainage_lines as clip_drainage_lines_local_task
 from .lulc_X_terrain.lulc_on_slope_cluster import (
     lulc_on_slope_cluster as lulc_on_slope_cluster_gee_task,
 )
@@ -190,7 +191,13 @@ def generate_drainage_layer(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        clip_drainage_lines.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            clip_drainage_lines_gee_task,
+            clip_drainage_lines_local_task,
+        )
+        task.apply_async(
             kwargs={
                 "state": state,
                 "district": district,
@@ -202,6 +209,9 @@ def generate_drainage_layer(request):
         return Response(
             {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
         )
+    except ValueError as e:
+        print("Invalid request in generate_drainage_layer api :: ", e)
+        return Response({"Exception": str(e)}, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
         print("Exception in generate_drainage_layer api :: ", e)
         return Response({"Exception": e}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
