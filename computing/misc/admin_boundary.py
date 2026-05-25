@@ -158,6 +158,7 @@ def generate_tehsil_shape_file_data(self, state, district, block, gee_account_id
                     layer_name=ADMIN_BOUNDARY_STAC_LAYER_NAME,
                     asset_id=asset_id,
                     layer_id=layer_id,
+                    geoserver_layer_name=geoserver_store,
                 )
                 log_task_step(
                     TASK_NAME,

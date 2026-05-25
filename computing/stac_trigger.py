@@ -41,6 +41,7 @@ def build_stac_result_entry(
     mode: str = "sync",
 ) -> dict[str, Any]:
     items = generation.get("items") or []
+    stac_metadata = [i["stac"] for i in items if isinstance(i.get("stac"), dict)]
     entry = {
         "asset_id": asset_id,
         "layer_name": layer_name,
@@ -54,7 +55,14 @@ def build_stac_result_entry(
         "mode": mode,
         "stac_item_ids": [i.get("item_id") for i in items if i.get("item_id")],
         "stac_items": items,
+        "stac_metadata": stac_metadata,
     }
+    if generation.get("error"):
+        entry["error"] = generation["error"]
+    if generation.get("geoserver_workspace"):
+        entry["geoserver_workspace"] = generation["geoserver_workspace"]
+    if generation.get("geoserver_layer"):
+        entry["geoserver_layer"] = generation["geoserver_layer"]
     if stac_task_id:
         entry["stac_task_id"] = stac_task_id
     return entry
@@ -71,6 +79,7 @@ def _stac_task_kwargs(
     end_year: str = "",
     overwrite: bool = False,
     layer_id: int | None = None,
+    geoserver_layer_name: str | None = None,
 ) -> dict[str, Any]:
     return {
         "layer_type": layer_type,
@@ -84,6 +93,7 @@ def _stac_task_kwargs(
         "overwrite": overwrite,
         "overwrite_metadata": STAC_OVERWRITE_METADATA,
         "layer_id": layer_id,
+        "geoserver_layer_name": geoserver_layer_name,
     }
 
 
@@ -98,6 +108,7 @@ def run_stac_collection_sync(
     end_year: str = "",
     overwrite: bool = False,
     layer_id: int | None = None,
+    geoserver_layer_name: str | None = None,
 ) -> dict[str, Any]:
     from computing.STAC_specs.stac_collection import STACCollectionGenerator
 
@@ -111,8 +122,10 @@ def run_stac_collection_sync(
         end_year=end_year,
         overwrite=overwrite,
         layer_id=layer_id,
+        geoserver_layer_name=geoserver_layer_name,
     )
     generator = STACCollectionGenerator()
+    gs_layer = kwargs.get("geoserver_layer_name")
     if layer_type == "raster":
         return generator.generate_raster(
             kwargs["state"],
@@ -136,6 +149,7 @@ def run_stac_collection_sync(
             overwrite=kwargs["overwrite"],
             overwrite_metadata=kwargs["overwrite_metadata"],
             layer_id=kwargs["layer_id"],
+            geoserver_layer_name=gs_layer,
         )
     raise ValueError(f"Unknown layer_type: {layer_type}")
 
@@ -197,6 +211,7 @@ def trigger_stac_collection(
     overwrite: bool = False,
     layer_id: int | None = None,
     asset_id: str | None = None,
+    geoserver_layer_name: str | None = None,
     queue: str = "nrm",
 ) -> dict[str, Any]:
     """
@@ -217,6 +232,7 @@ def trigger_stac_collection(
         end_year=end_year,
         overwrite=overwrite,
         layer_id=layer_id,
+        geoserver_layer_name=geoserver_layer_name,
     )
     location = _stac_location_fields(
         layer_name, layer_type, state, district, block
@@ -233,6 +249,7 @@ def trigger_stac_collection(
             end_year=end_year,
             overwrite=overwrite,
             layer_id=layer_id,
+            geoserver_layer_name=geoserver_layer_name,
         )
         entry = build_stac_result_entry(
             asset_id=asset_id,

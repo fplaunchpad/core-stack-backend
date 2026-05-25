@@ -18,6 +18,7 @@ from nrm_app.celery import app
 from nrm_app.settings import (
     BASE_DIR,
     GEOSERVER_PASSWORD,
+    GEOSERVER_URL,
     GEOSERVER_USERNAME,
     S3_ACCESS_KEY,
     S3_SECRET_KEY,
@@ -61,7 +62,7 @@ _THUMBNAIL_LONG_SIDE = 512
 
 @dataclass
 class STACConfig:
-    geoserver_base_url: str = constants.GEOSERVER_BASE_URL
+    geoserver_base_url: str = GEOSERVER_URL or constants.GEOSERVER_BASE_URL
     thumbnail_data_url: str = constants.S3_STAC_BUCKET_URL
     local_data_dir: str = _STAC_DATA
     stac_files_dir: str = os.path.join(
@@ -851,6 +852,9 @@ class BaseSTACItemBuilder(ABC):
             kwargs.get("start_year", ""),
             overwrite_metadata=overwrite_metadata,
         )
+        override_gs = kwargs.get("geoserver_layer_name")
+        if override_gs:
+            layer_map = {**layer_map, "layer_name": override_gs}
         log.debug("Resolved layer_map: %s", layer_map)
         item = self._create_item(
             state, district, block, layer_name, description, layer_map, **kwargs
@@ -1149,7 +1153,7 @@ class STACCollectionGenerator:
     def _builder_args(self):
         return (self.config, self.geoserver, self.metadata, self.style_parser)
 
-    def _item_paths(self, state, district, block, item_id, year=None):
+    def _item_paths(self, state, district, block, item_id, year=None, item=None):
         state = sanitize_text(state.lower())
         district = sanitize_text(district.lower())
         block = sanitize_text(block.lower())
@@ -1160,12 +1164,28 @@ class STACCollectionGenerator:
             district,
             block,
         )
-        return {
+        paths = {
             "item_id": item_id,
             "item_json_path": os.path.join(block_dir, item_id, f"{item_id}.json"),
             "collection_path": os.path.join(block_dir, "collection.json"),
             "year": year,
         }
+        if item is not None:
+            paths["stac"] = item.to_dict(transform_hrefs=False)
+        return paths
+
+    @staticmethod
+    def _generation_failure(
+        layer_name,
+        layer_map=None,
+        error="stac_item_not_built",
+    ):
+        payload = {"success": False, "items": [], "error": error}
+        if layer_map:
+            payload["geoserver_workspace"] = layer_map.get("workspace")
+            payload["geoserver_layer"] = layer_map.get("layer_name")
+        payload["stac_layer_name"] = layer_name
+        return payload
 
     def generate_raster(
         self,
@@ -1241,7 +1261,9 @@ class STACCollectionGenerator:
                 if os.path.exists(thumb_path):
                     s3_paths.add(thumb_path)
             log.info("generate_raster built item=%s", item.id)
-            built_items.append(self._item_paths(state, district, block, item.id, year))
+            built_items.append(
+                self._item_paths(state, district, block, item.id, year, item=item)
+            )
 
         if not built_items:
             log.error("generate_raster: no items were built for layer=%s", layer_name)
@@ -1270,6 +1292,7 @@ class STACCollectionGenerator:
         overwrite=False,
         overwrite_metadata=False,
         layer_id=None,
+        geoserver_layer_name=None,
     ):
         from computing.stac_trigger import STAC_OVERWRITE_METADATA, STAC_UPLOAD_TO_S3
 
@@ -1282,7 +1305,7 @@ class STACCollectionGenerator:
 
         log.info(
             "generate_vector start: state=%s district=%s block=%s layer=%s "
-            "upload_to_s3=%s overwrite=%s overwrite_metadata=%s",
+            "upload_to_s3=%s overwrite=%s overwrite_metadata=%s geoserver_url=%s",
             state,
             district,
             block,
@@ -1290,10 +1313,17 @@ class STACCollectionGenerator:
             upload_to_s3,
             overwrite,
             overwrite_metadata,
+            self.config.geoserver_base_url,
         )
         state, district, block = (
             sanitize_text(x.lower()) for x in (state, district, block)
         )
+        layer_map = self.metadata.get_layer_mapping(
+            layer_name, district, block, overwrite_metadata=overwrite_metadata
+        )
+        if geoserver_layer_name:
+            layer_map = {**layer_map, "layer_name": geoserver_layer_name}
+
         builder = VectorSTACItemBuilder(*self._builder_args())
         item = builder.build(
             state,
@@ -1302,12 +1332,20 @@ class STACCollectionGenerator:
             layer_name,
             overwrite=overwrite,
             overwrite_metadata=overwrite_metadata,
+            geoserver_layer_name=geoserver_layer_name,
         )
         if item is None:
             log.error(
-                "generate_vector aborted: item not built for layer=%s", layer_name
+                "generate_vector aborted: item not built for layer=%s ws=%s gs=%s",
+                layer_name,
+                layer_map.get("workspace"),
+                layer_map.get("layer_name"),
             )
-            return {"success": False, "items": []}
+            return self._generation_failure(
+                layer_name,
+                layer_map=layer_map,
+                error="vector_geoserver_metadata_unavailable",
+            )
         touched = self.catalog_mgr.update(state, district, block, item)
         if upload_to_s3:
             s3_paths = set(touched)
@@ -1321,10 +1359,17 @@ class STACCollectionGenerator:
         else:
             log.info("Skipping S3 sync (upload_to_s3=False)")
         log.info("generate_vector done: item=%s", item.id)
-        item_paths = self._item_paths(state, district, block, item.id)
+        item_paths = self._item_paths(
+            state, district, block, item.id, item=item
+        )
         if layer_id:
             _mark_layer_stac_generated(layer_id)
-        return {"success": True, "items": [item_paths]}
+        return {
+            "success": True,
+            "items": [item_paths],
+            "geoserver_workspace": layer_map.get("workspace"),
+            "geoserver_layer": layer_map.get("layer_name"),
+        }
 
     def _sync_s3(self, paths=None):
         if paths:

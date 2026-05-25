@@ -98,6 +98,10 @@ def trigger_stac_for_layer(layer: Layer, mapping: LayerMapping) -> dict:
         layer_generation_sync_mode(),
     )
 
+    geoserver_layer = _format_geoserver_name(
+        mapping.geoserver_layer_name, layer
+    ) or None
+
     return trigger_stac_collection(
         layer_type=mapping.layer_type,
         state=layer.state.state_name,
@@ -108,6 +112,7 @@ def trigger_stac_for_layer(layer: Layer, mapping: LayerMapping) -> dict:
         end_year=str(misc.get("end_year", "") or ""),
         layer_id=layer.id,
         asset_id=asset_id,
+        geoserver_layer_name=geoserver_layer,
         queue=_STAC_QUEUE,
     )
 
