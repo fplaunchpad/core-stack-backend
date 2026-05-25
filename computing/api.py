@@ -204,7 +204,7 @@ def generate_drainage_layer(request):
                 "block": block,
                 "gee_account_id": gee_account_id,
             },
-            queue="nrm",
+            queue="nrm1",
         )
         return Response(
             {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
