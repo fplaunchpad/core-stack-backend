@@ -1690,7 +1690,7 @@ def generate_mws_connectivity(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        
+
         compute = _get_compute_mode(request)
         task = _select_compute_task(
             compute,
@@ -1704,7 +1704,7 @@ def generate_mws_connectivity(request):
                 "block": block,
                 "gee_account_id": gee_account_id,
             },
-            queue="nrm"
+            queue="nrm1",
         )
         return Response(
             {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
