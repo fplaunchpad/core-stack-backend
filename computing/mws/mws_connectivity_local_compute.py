@@ -62,6 +62,11 @@ def _compute_mws_connectivity_for_watersheds(watersheds_gdf, mws_gdf):
     if "index_right" in mws_in_roi.columns:
         mws_in_roi = mws_in_roi.drop(columns=["index_right"])
 
+    # Drop specific columns if they exist
+    cols_to_drop = [col for col in ["left_uid", "right_uid", "id"] if col in mws_in_roi.columns]
+    if cols_to_drop:
+        mws_in_roi = mws_in_roi.drop(columns=cols_to_drop)
+
     # ── Step 3: Final cleanup ─────────────────────────────────────────────
     mws_in_roi = mws_in_roi[~mws_in_roi.geometry.is_empty]
     mws_in_roi = mws_in_roi[mws_in_roi.geometry.is_valid]
