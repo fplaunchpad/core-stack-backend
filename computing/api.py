@@ -1591,7 +1591,7 @@ def generate_antyodaya(request):
         state = request.data.get("state").lower()
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
-        sync_to_geoserver = request.data.get("sync_to_geoserver", False)
+        sync_to_geoserver = request.data.get("sync_to_geoserver", True)
         overwrite = request.data.get("overwrite", False)
         generate_antyodaya_layer_task.apply_async(
             args=[state, district, block, sync_to_geoserver, overwrite],
