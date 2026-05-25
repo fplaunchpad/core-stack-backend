@@ -560,6 +560,33 @@ def generate_tehsil_report(request):
         return render(request, "error-page.html", {})
 
 
+@api_view(["GET"])
+@auth_free
+@schema(None)
+@api_security_check(auth_type="Auth_free")
+def generate_village_report(request):
+    try:
+        # ? district, block, villageId
+        params = request.GET
+        result = {}
+
+        for key, value in params.items():
+            result[key] = value
+        
+        context = {
+            "state": result["state"],
+            "district": result["district"],
+            "block": result["block"],
+            "village_id" : result["villageId"],
+            "development_scores": json.dumps([0.85, 0.72, 0.65, 0.78, 0.82, 0.75, 0.68, 0.80, 0.75, 0.70])  # Serialize to JSON string
+        }
+
+        return render(request, "village-report.html", context)
+
+    except Exception as e:
+        logger.exception("Exception in generate_village_report api :: ", e)
+        return render(request, "error-page.html", {})
+
 # ---------------------------------------------------------------------------
 # DPR Data API
 # ---------------------------------------------------------------------------
