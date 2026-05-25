@@ -33,11 +33,11 @@ class Command(BaseCommand):
         )
 
         if layer_type == "raster":
-            ok = generator.generate_raster(**common, start_year=options["start_year"])
+            result = generator.generate_raster(**common, start_year=options["start_year"])
         else:
-            ok = generator.generate_vector(**common)
+            result = generator.generate_vector(**common)
 
-        if ok:
+        if result.get("success"):
             self.stdout.write(self.style.SUCCESS(
                 f"STAC collection written to {generator.config.stac_files_dir}"
             ))

@@ -424,7 +424,7 @@ class TestSTACCollectionGeneratorVector(unittest.TestCase):
             state="Bihar", district="Nalanda", block="Hilsa",
             layer_name="test_vector",
         )
-        self.assertTrue(result)
+        self.assertTrue(result["success"])
 
         root_path = os.path.join(self.config.stac_files_dir, "catalog.json")
         self.assertTrue(os.path.exists(root_path))
@@ -471,7 +471,7 @@ class TestSTACCollectionGeneratorRaster(unittest.TestCase):
                 state="Bihar", district="Nalanda", block="Hilsa",
                 layer_name="test_raster",
             )
-        self.assertTrue(result)
+        self.assertTrue(result["success"])
 
         item_dir = os.path.join(
             self.config.stac_files_dir, "tehsil_wise", "bihar", "nalanda", "hilsa",

@@ -28,8 +28,9 @@ from utilities.constants import (
     SOI_TEHSIL,
 )
 from computing.utils import save_layer_info_to_db, update_layer_sync_status
+from computing.stac_trigger import layer_generation_sync_mode, trigger_stac_collection
 
-from computing.STAC_specs import generate_STAC_layerwise
+ADMIN_BOUNDARY_STAC_LAYER_NAME = "admin_boundaries_vector"
 
 
 TASK_NAME = "generate_tehsil_shape_file_data"
@@ -46,7 +47,16 @@ def generate_tehsil_shape_file_data(self, state, district, block, gee_account_id
         block=block,
         gee_account_id=gee_account_id,
     )
-    log_task_step(TASK_NAME, "start", **ctx)
+    geoserver_store = (
+        f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}"
+    )
+    log_task_step(
+        TASK_NAME,
+        "start",
+        geoserver_store=geoserver_store,
+        stac_pipeline="stac_collection_v2",
+        **ctx,
+    )
     try:
         log_task_step(TASK_NAME, "ee_initialize", **ctx)
         ee_initialize(gee_account_id)
@@ -123,7 +133,12 @@ def generate_tehsil_shape_file_data(self, state, district, block, gee_account_id
             workspace="panchayat_boundaries",
             **ctx,
         )
-        res = push_shape_to_geoserver(shp_path, workspace="panchayat_boundaries")
+        res = push_shape_to_geoserver(
+            shp_path,
+            store_name=geoserver_store,
+            workspace="panchayat_boundaries",
+            layer_name=geoserver_store,
+        )
         layer_at_geoserver = False
         log_task_step(
             TASK_NAME,
@@ -132,22 +147,43 @@ def generate_tehsil_shape_file_data(self, state, district, block, gee_account_id
             response=res,
             **ctx,
         )
+        stac_entry = None
         if res["status_code"] == 201 and layer_id:
-            update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
-
-            layer_STAC_generated = generate_STAC_layerwise.generate_vector_stac(
-                state=state,
-                district=district,
-                block=block,
-                layer_name="admin_boundaries_vector",
-            )
-            update_layer_sync_status(
-                layer_id=layer_id, is_stac_specs_generated=layer_STAC_generated
-            )
+            if layer_generation_sync_mode():
+                stac_entry = trigger_stac_collection(
+                    layer_type="vector",
+                    state=state,
+                    district=district,
+                    block=block,
+                    layer_name=ADMIN_BOUNDARY_STAC_LAYER_NAME,
+                    asset_id=asset_id,
+                    layer_id=layer_id,
+                )
+                log_task_step(
+                    TASK_NAME,
+                    "stac_sync_complete",
+                    stac_success=stac_entry.get("success"),
+                    stac_item_ids=stac_entry.get("stac_item_ids"),
+                    **ctx,
+                )
+                update_layer_sync_status(
+                    layer_id=layer_id,
+                    sync_to_geoserver=True,
+                    is_stac_specs_generated=bool(stac_entry.get("success")),
+                )
+            else:
+                # Async layer-gen mode: signal queues STAC on Celery when sync flips True.
+                update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
+                log_task_step(TASK_NAME, "stac_async_queued_via_signal", **ctx)
             layer_at_geoserver = True
 
         log_task_step(TASK_NAME, "complete", layer_at_geoserver=layer_at_geoserver, **ctx)
-        return layer_at_geoserver
+        return {
+            "success": layer_at_geoserver,
+            "asset_id": asset_id,
+            "layer_id": layer_id,
+            "stac": [stac_entry] if stac_entry else [],
+        }
     except Exception as exc:
         log_task_failure(TASK_NAME, exc, **ctx)
         raise

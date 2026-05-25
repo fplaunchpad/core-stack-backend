@@ -87,7 +87,13 @@ from .mws.mws_centroid import generate_mws_centroid_data
 from .misc.facilities_proximity import generate_facilities_proximity_task
 from .misc.digital_elevation_model import generate_dem_layer
 from .misc.canal_layer import canal_vector
-from .STAC_specs.stac_collection import generate_stac_collection_task
+from computing.stac_trigger import (
+    format_stac_api_response,
+    layer_generation_sync_mode,
+    parse_layer_generation_specs,
+    stac_from_task_result,
+    trigger_stac_collection,
+)
 from utilities.layer_generation_mode import sync_layer_generation_if_enabled
 from utilities.layer_generation_logging import (
     layer_api_error_response,
@@ -153,7 +159,9 @@ def _parse_zoi_request_dates(request):
     return start_date, end_date
 
 
-def _task_started_response(message, task=None, asset_id=None, asset_ids=None):
+def _task_started_response(
+    message, task=None, asset_id=None, asset_ids=None, stac=None
+):
     payload = {
         "status": "initiated",
         "Success": message,
@@ -161,6 +169,20 @@ def _task_started_response(message, task=None, asset_id=None, asset_ids=None):
     }
     if task is not None and getattr(task, "id", None):
         payload["task_id"] = task.id
+
+    if stac is None and task is not None:
+        try:
+            if task.ready() and not task.failed():
+                result_stac = stac_from_task_result(task.result)
+                if result_stac is not None:
+                    stac = result_stac
+                    if layer_generation_sync_mode():
+                        payload["status"] = "completed"
+                        payload["Success"] = message
+                        payload["message"] = message
+        except Exception:
+            pass
+
     resolved = layer_assets.resolve_asset_id_field(asset_id=asset_id, asset_ids=asset_ids)
     if resolved is not None:
         payload["asset_id"] = resolved
@@ -168,6 +190,8 @@ def _task_started_response(message, task=None, asset_id=None, asset_ids=None):
         payload["asset_ids"] = asset_ids
     elif isinstance(asset_id, list):
         payload["asset_ids"] = asset_id
+    if stac is not None:
+        payload["stac"] = stac
     return Response(payload, status=status.HTTP_200_OK)
 
 
@@ -201,7 +225,12 @@ def generate_admin_boundary(request):
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         asset_id = layer_assets.admin_boundary_asset_id(state, district, block)
-        return _task_started_response("Successfully initiated", task=task, asset_id=asset_id)
+        message = (
+            "Completed"
+            if layer_generation_sync_mode()
+            else "Successfully initiated"
+        )
+        return _task_started_response(message, task=task, asset_id=asset_id)
     except Exception as e:
         return layer_api_error_response("generate_admin_boundary", e, request=request)
 
@@ -1830,50 +1859,55 @@ def generate_facilities_proximity(request):
 @schema(None)
 def generate_stac_collection(request):
     try:
-        state = request.data.get("state")
-        district = request.data.get("district")
-        block = request.data.get("block")
-        layer_name = request.data.get("layer_name")
-        layer_type = request.data.get("layer_type")
-        start_year = request.data.get("start_year", "")
-        end_year = request.data.get("end_year", "")
-        upload_to_s3 = request.data.get("upload_to_s3", False)
-        overwrite = request.data.get("overwrite", False)
-        overwrite_metadata = request.data.get("overwrite_metadata", False)
-
-        if not all([state, district, block, layer_name, layer_type]):
+        specs = parse_layer_generation_specs(request.data)
+        if not specs:
             return Response(
-                {
-                    "error": "state, district, block, layer_name, and layer_type are required"
-                },
+                {"error": "At least one layer spec is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if layer_type not in ("raster", "vector"):
-            return Response(
-                {"error": "layer_type must be 'raster' or 'vector'"},
-                status=status.HTTP_400_BAD_REQUEST,
+        stac_entries = []
+        for spec in specs:
+            state = spec.get("state")
+            district = spec.get("district")
+            block = spec.get("block")
+            layer_name = spec.get("layer_name")
+            layer_type = spec.get("layer_type")
+            start_year = spec.get("start_year", "")
+            end_year = spec.get("end_year", "")
+            overwrite = spec.get("overwrite", False)
+            asset_id = spec.get("asset_id")
+
+            if not all([state, district, block, layer_name, layer_type]):
+                return Response(
+                    {
+                        "error": "state, district, block, layer_name, and layer_type are required"
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if layer_type not in ("raster", "vector"):
+                return Response(
+                    {"error": "layer_type must be 'raster' or 'vector'"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            stac_entries.append(
+                trigger_stac_collection(
+                    layer_type=layer_type,
+                    state=state,
+                    district=district,
+                    block=block,
+                    layer_name=layer_name,
+                    start_year=start_year,
+                    end_year=end_year,
+                    overwrite=overwrite,
+                    asset_id=asset_id,
+                    queue="nrm",
+                )
             )
 
-        generate_stac_collection_task.apply_async(
-            kwargs={
-                "layer_type": layer_type,
-                "state": state,
-                "district": district,
-                "block": block,
-                "layer_name": layer_name,
-                "start_year": start_year,
-                "end_year": end_year,
-                "upload_to_s3": upload_to_s3,
-                "overwrite": overwrite,
-                "overwrite_metadata": overwrite_metadata,
-            },
-            queue="nrm",
-        )
-        return Response(
-            {"Success": "STAC collection generation initiated"},
-            status=status.HTTP_200_OK,
-        )
+        return Response(format_stac_api_response(stac_entries), status=status.HTTP_200_OK)
     except Exception as e:
         return layer_api_error_response("generate_stac_collection", e, request=request)
 

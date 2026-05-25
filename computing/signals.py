@@ -1,12 +1,9 @@
 """Auto-trigger STAC collection generation when a Layer is synced to GeoServer.
 
-The handler resolves the saved `Layer` (which stores a *templated* GeoServer
-layer name) back to the canonical STAC `layer_name` / `layer_type` via the
-`LayerMapping` registry (sourced from `layer_mapping.csv`), then dispatches the
-`generate_stac_collection_task` Celery task asynchronously.
+Uses ``LAYER_GENERATION_SYNC_MODE`` (same as layer-generation APIs):
 
-This removes the need for every layer-generation task to hardcode the STAC
-parameters and to call STAC generation synchronously.
+- ``True``: STAC runs synchronously in-process (``upload_to_s3=False``).
+- ``False``: STAC is queued on Celery only — no inline sync (``upload_to_s3=False``).
 """
 
 from __future__ import annotations
@@ -17,10 +14,10 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from computing.models import Layer, LayerMapping
+from computing.stac_trigger import layer_generation_sync_mode, trigger_stac_collection
 from utilities.gee_utils import valid_gee_text
 
 log = logging.getLogger(__name__)
-
 
 _STAC_QUEUE = "nrm"
 
@@ -42,14 +39,7 @@ def _format_geoserver_name(template: str, layer: Layer) -> str:
 
 
 def _resolve_mapping(layer: Layer) -> LayerMapping | None:
-    """Return the best matching LayerMapping for a saved Layer.
-
-    Resolution is keyed on `dataset.name -> LayerMapping.db_dataset_name`.
-    For datasets that fan out into multiple STAC layers (e.g. Change Detection
-    has 5 sub-layers per dataset row), we disambiguate by formatting each
-    candidate's `geoserver_layer_name` template against the Layer's location
-    and year metadata and matching the result against `layer.layer_name`.
-    """
+    """Return the best matching LayerMapping for a saved Layer."""
     if not layer.dataset_id:
         return None
 
@@ -93,6 +83,35 @@ def _resolve_mapping(layer: Layer) -> LayerMapping | None:
     return matches[0]
 
 
+def trigger_stac_for_layer(layer: Layer, mapping: LayerMapping) -> dict:
+    misc = layer.misc or {}
+    asset_id = layer.gee_asset_path
+    if asset_id in (None, "", "not available"):
+        asset_id = None
+
+    log.info(
+        "STAC auto-trigger: layer id=%s (%s/%s) asset_id=%s sync_mode=%s",
+        layer.id,
+        mapping.layer_type,
+        mapping.layer_name,
+        asset_id,
+        layer_generation_sync_mode(),
+    )
+
+    return trigger_stac_collection(
+        layer_type=mapping.layer_type,
+        state=layer.state.state_name,
+        district=layer.district.district_name,
+        block=layer.block.tehsil_name,
+        layer_name=mapping.layer_name,
+        start_year=str(misc.get("start_year", "") or ""),
+        end_year=str(misc.get("end_year", "") or ""),
+        layer_id=layer.id,
+        asset_id=asset_id,
+        queue=_STAC_QUEUE,
+    )
+
+
 @receiver(post_save, sender=Layer, dispatch_uid="computing.signals.trigger_stac_on_geoserver_sync")
 def trigger_stac_on_geoserver_sync(sender, instance: Layer, created, **kwargs):
     if not instance.is_sync_to_geoserver or instance.is_stac_specs_generated:
@@ -102,34 +121,11 @@ def trigger_stac_on_geoserver_sync(sender, instance: Layer, created, **kwargs):
     if mapping is None:
         return
 
-    # Lazy import: avoids importing Celery / stac_collection at app-loading time.
-    from computing.STAC_specs.stac_collection import generate_stac_collection_task
-
-    misc = instance.misc or {}
-    task_kwargs = dict(
-        layer_type=mapping.layer_type,
-        state=instance.state.state_name,
-        district=instance.district.district_name,
-        block=instance.block.tehsil_name,
-        layer_name=mapping.layer_name,
-        start_year=str(misc.get("start_year", "") or ""),
-        end_year=str(misc.get("end_year", "") or ""),
-        upload_to_s3=True,
-        layer_id=instance.id,
-    )
-
-    log.info(
-        "STAC auto-trigger: dispatching task for layer id=%s (%s/%s)",
-        instance.id,
-        mapping.layer_type,
-        mapping.layer_name,
-    )
-
     try:
-        generate_stac_collection_task.apply_async(kwargs=task_kwargs, queue=_STAC_QUEUE)
+        trigger_stac_for_layer(instance, mapping)
     except Exception as exc:  # noqa: BLE001
         log.error(
-            "STAC auto-trigger: failed to dispatch task for layer id=%s: %s",
+            "STAC auto-trigger: failed for layer id=%s: %s",
             instance.id,
             exc,
         )

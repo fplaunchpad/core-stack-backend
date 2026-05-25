@@ -1149,6 +1149,24 @@ class STACCollectionGenerator:
     def _builder_args(self):
         return (self.config, self.geoserver, self.metadata, self.style_parser)
 
+    def _item_paths(self, state, district, block, item_id, year=None):
+        state = sanitize_text(state.lower())
+        district = sanitize_text(district.lower())
+        block = sanitize_text(block.lower())
+        block_dir = os.path.join(
+            self.config.stac_files_dir,
+            self.config.tehsil_dirname,
+            state,
+            district,
+            block,
+        )
+        return {
+            "item_id": item_id,
+            "item_json_path": os.path.join(block_dir, item_id, f"{item_id}.json"),
+            "collection_path": os.path.join(block_dir, "collection.json"),
+            "year": year,
+        }
+
     def generate_raster(
         self,
         state,
@@ -1160,7 +1178,17 @@ class STACCollectionGenerator:
         upload_to_s3=False,
         overwrite=False,
         overwrite_metadata=False,
+        layer_id=None,
     ):
+        from computing.stac_trigger import STAC_OVERWRITE_METADATA, STAC_UPLOAD_TO_S3
+
+        if upload_to_s3:
+            log.warning(
+                "generate_raster: upload_to_s3=True ignored; S3 sync disabled"
+            )
+        upload_to_s3 = STAC_UPLOAD_TO_S3
+        overwrite_metadata = STAC_OVERWRITE_METADATA
+
         log.info(
             "generate_raster start: state=%s district=%s block=%s layer=%s "
             "start_year=%s end_year=%s upload_to_s3=%s overwrite=%s overwrite_metadata=%s",
@@ -1184,7 +1212,7 @@ class STACCollectionGenerator:
         else:
             years = [start_year]
 
-        built = []
+        built_items = []
         s3_paths = set()
         for year in years:
             item = builder.build(
@@ -1213,18 +1241,24 @@ class STACCollectionGenerator:
                 if os.path.exists(thumb_path):
                     s3_paths.add(thumb_path)
             log.info("generate_raster built item=%s", item.id)
-            built.append(item.id)
+            built_items.append(self._item_paths(state, district, block, item.id, year))
 
-        if not built:
+        if not built_items:
             log.error("generate_raster: no items were built for layer=%s", layer_name)
-            return False
+            return {"success": False, "items": []}
 
         if upload_to_s3:
             self._sync_s3(paths=list(s3_paths))
         else:
             log.info("Skipping S3 sync (upload_to_s3=False)")
-        log.info("generate_raster done: built %d item(s)=%s", len(built), built)
-        return True
+        log.info(
+            "generate_raster done: built %d item(s)=%s",
+            len(built_items),
+            [i["item_id"] for i in built_items],
+        )
+        if layer_id and built_items:
+            _mark_layer_stac_generated(layer_id)
+        return {"success": True, "items": built_items}
 
     def generate_vector(
         self,
@@ -1235,7 +1269,17 @@ class STACCollectionGenerator:
         upload_to_s3=False,
         overwrite=False,
         overwrite_metadata=False,
+        layer_id=None,
     ):
+        from computing.stac_trigger import STAC_OVERWRITE_METADATA, STAC_UPLOAD_TO_S3
+
+        if upload_to_s3:
+            log.warning(
+                "generate_vector: upload_to_s3=True ignored; S3 sync disabled"
+            )
+        upload_to_s3 = STAC_UPLOAD_TO_S3
+        overwrite_metadata = STAC_OVERWRITE_METADATA
+
         log.info(
             "generate_vector start: state=%s district=%s block=%s layer=%s "
             "upload_to_s3=%s overwrite=%s overwrite_metadata=%s",
@@ -1263,7 +1307,7 @@ class STACCollectionGenerator:
             log.error(
                 "generate_vector aborted: item not built for layer=%s", layer_name
             )
-            return False
+            return {"success": False, "items": []}
         touched = self.catalog_mgr.update(state, district, block, item)
         if upload_to_s3:
             s3_paths = set(touched)
@@ -1277,7 +1321,10 @@ class STACCollectionGenerator:
         else:
             log.info("Skipping S3 sync (upload_to_s3=False)")
         log.info("generate_vector done: item=%s", item.id)
-        return True
+        item_paths = self._item_paths(state, district, block, item.id)
+        if layer_id:
+            _mark_layer_stac_generated(layer_id)
+        return {"success": True, "items": [item_paths]}
 
     def _sync_s3(self, paths=None):
         if paths:
@@ -1321,9 +1368,19 @@ def generate_stac_collection_task(
     overwrite_metadata=False,
     layer_id=None,
 ):
+    from computing.stac_trigger import STAC_OVERWRITE_METADATA, STAC_UPLOAD_TO_S3
+
+    if upload_to_s3:
+        log.warning(
+            "generate_stac_collection_task: upload_to_s3=True ignored; "
+            "STAC S3 sync is disabled to avoid writing to production"
+        )
+    upload_to_s3 = STAC_UPLOAD_TO_S3
+    overwrite_metadata = STAC_OVERWRITE_METADATA
+
     generator = STACCollectionGenerator()
     if layer_type == "raster":
-        result = generator.generate_raster(
+        return generator.generate_raster(
             state,
             district,
             block,
@@ -1333,9 +1390,10 @@ def generate_stac_collection_task(
             upload_to_s3=upload_to_s3,
             overwrite=overwrite,
             overwrite_metadata=overwrite_metadata,
+            layer_id=layer_id,
         )
-    elif layer_type == "vector":
-        result = generator.generate_vector(
+    if layer_type == "vector":
+        return generator.generate_vector(
             state,
             district,
             block,
@@ -1343,14 +1401,9 @@ def generate_stac_collection_task(
             upload_to_s3=upload_to_s3,
             overwrite=overwrite,
             overwrite_metadata=overwrite_metadata,
+            layer_id=layer_id,
         )
-    else:
-        raise ValueError(f"Unknown layer_type: {layer_type}")
-
-    if result and layer_id:
-        _mark_layer_stac_generated(layer_id)
-
-    return result
+    raise ValueError(f"Unknown layer_type: {layer_type}")
 
 
 def _mark_layer_stac_generated(layer_id):
