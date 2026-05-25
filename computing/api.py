@@ -115,7 +115,12 @@ from .misc.naturaldepression import generate_natural_depression_data
 from .misc.distancetonearestdrainage import generate_distance_to_nearest_drainage_line
 from .misc.catchment_area import generate_catchment_area_singleflow
 from .zoi_layers.zoi import generate_zoi
-from .mws.mws_connectivity import generate_mws_connectivity_data
+from .mws.mws_connectivity import (
+    generate_mws_connectivity_data as generate_mws_connectivity_gee_task,
+)
+from .mws.mws_connectivity_local_compute import (
+    mws_connectivity_vector as generate_mws_connectivity_local_task,
+)
 from .mws.mws_centroid import generate_mws_centroid_data
 from .misc.facilities_proximity import generate_facilities_proximity_task
 from .STAC_specs.stac_collection import _make_celery_task as _make_stac_task
@@ -1679,20 +1684,36 @@ def generate_zoi_to_gee(request):
 @api_view(["POST"])
 @schema(None)
 def generate_mws_connectivity(request):
-    print("Inside generate_mws_connectivity_to_gee API.")
+    print("Inside generate_mws_connectivity API.")
     try:
         state = request.data.get("state").lower()
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_mws_connectivity_data.apply_async(
-            args=[state, district, block, gee_account_id], queue="nrm"
+        
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_mws_connectivity_gee_task,
+            generate_mws_connectivity_local_task,
+        )
+        task.apply_async(
+            kwargs={
+                "state": state,
+                "district": district,
+                "block": block,
+                "gee_account_id": gee_account_id,
+            },
+            queue="nrm"
         )
         return Response(
             {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
         )
+    except ValueError as e:
+        print("Invalid request in generate_mws_connectivity api :: ", e)
+        return Response({"Exception": str(e)}, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:
-        print("Exception in generate_mws_connectivity_to_gee api :: ", e)
+        print("Exception in generate_mws_connectivity api :: ", e)
         return Response({"Exception": e}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
