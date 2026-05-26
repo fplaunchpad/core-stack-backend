@@ -16,40 +16,36 @@ from computing.local_compute_helper import (
     write_vector_output,
 )
 
-
-FACILITIES_PAN_INDIA_LOCAL_PATH = (
-    PROJECT_ROOT / "data/base_layers/Pan_India_facilities_polygon.geojson"
-)
-FACILITIES_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/layers/facilities"
-GEOSERVER_WORKSPACE = "facilities"
+MWS_CENTROID_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/layers/mws_centroid"
+GEOSERVER_WORKSPACE = "mws_centroid"
 
 
-def _compute_proximity_for_watersheds(watersheds_gdf, facilities_gdf):
+def _compute_mws_centroids(watersheds_gdf):
     """
-    Filters facilities to strictly those intersecting the watershed boundaries.
+    Computes the centroid of each watershed polygon and extracts lat/lon.
     """
-    if facilities_gdf.empty:
-        return facilities_gdf
+    if watersheds_gdf.empty:
+        return watersheds_gdf
 
-    # Ensure CRS matches
-    if watersheds_gdf.crs and facilities_gdf.crs and watersheds_gdf.crs != facilities_gdf.crs:
-        facilities_gdf = facilities_gdf.to_crs(watersheds_gdf.crs)
-
-    outer_boundary = watersheds_gdf.geometry.unary_union
+    # Create a copy so we don't modify the original
+    centroids_gdf = watersheds_gdf.copy()
     
-    # Precise intersection check (since load-time mask is just bounding box)
-    facilities_in_roi = facilities_gdf[facilities_gdf.intersects(outer_boundary)].copy()
+    # Ensure WGS84 for correct lat/lon coordinate extraction
+    if centroids_gdf.crs != "EPSG:4326":
+        centroids_gdf = centroids_gdf.to_crs("EPSG:4326")
 
-    # Final cleanup
-    facilities_in_roi = facilities_in_roi[~facilities_in_roi.geometry.is_empty]
-    facilities_in_roi = facilities_in_roi[facilities_in_roi.geometry.is_valid]
-    facilities_in_roi = facilities_in_roi[facilities_in_roi.geometry.notna()]
+    # Replace polygon geometry with point centroid
+    centroids_gdf["geometry"] = centroids_gdf.geometry.centroid
+    
+    # Extract coordinates
+    centroids_gdf["centroid_lon"] = centroids_gdf.geometry.x
+    centroids_gdf["centroid_lat"] = centroids_gdf.geometry.y
 
-    return facilities_in_roi
+    return centroids_gdf
 
 
 @app.task(bind=True)
-def generate_facilities_proximity_local(
+def generate_mws_centroid_data_local(
     self,
     state=None,
     district=None,
@@ -63,7 +59,7 @@ def generate_facilities_proximity_local(
 ):
     _ = self, gee_account_id
     if state and district and block:
-        layer_name = f"facilities_{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}"
+        layer_name = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_mws_centroid"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -74,34 +70,20 @@ def generate_facilities_proximity_local(
     else:
         if not roi_path or not asset_suffix:
             raise ValueError("ROI path and asset_suffix are required for custom runs.")
-        layer_name = f"{asset_suffix}_facilities".lower()
+        layer_name = f"{asset_suffix}_mws_centroid".lower()
         watersheds_gdf = read_validated_vector_file(roi_path, f"Invalid ROI file: {roi_path}")
         print(f"ROI source: {roi_path}")
 
-    if not os.path.exists(FACILITIES_PAN_INDIA_LOCAL_PATH):
-        raise FileNotFoundError(f"PAN INDIA Facilities file not found at {FACILITIES_PAN_INDIA_LOCAL_PATH}")
-
-    print("Loading Facilities data overlapping ROI...")
-    # Load using bounding box mask to save memory
-    facilities_gdf = read_validated_vector_file(
-        FACILITIES_PAN_INDIA_LOCAL_PATH,
-        "PAN INDIA Facilities file has no valid geometries overlapping ROI",
-        mask=watersheds_gdf,
-    )
-    print(f"Loaded {len(facilities_gdf)} Facilities features")
-
-    result_gdf = _compute_proximity_for_watersheds(
-        watersheds_gdf=watersheds_gdf,
-        facilities_gdf=facilities_gdf,
-    )
-    print(f"Final valid Facilities features after spatial filter: {len(result_gdf)}")
+    print("Computing MWS centroids...")
+    result_gdf = _compute_mws_centroids(watersheds_gdf=watersheds_gdf)
+    print(f"Computed centroids for {len(result_gdf)} features")
 
     output_path = build_output_vector_path(
         layer_name=layer_name,
         state=state,
         district=district,
         block=block,
-        output_base_dir=FACILITIES_OUTPUT_BASE_DIR,
+        output_base_dir=MWS_CENTROID_OUTPUT_BASE_DIR,
     )
 
     asset_id = write_vector_output(
@@ -109,7 +91,7 @@ def generate_facilities_proximity_local(
         output_path=output_path,
         layer_name=layer_name,
     )
-    print(f"Saved local Facilities vector: {asset_id}")
+    print(f"Saved local MWS centroid vector: {asset_id}")
 
     layer_at_geoserver = False
 
@@ -131,10 +113,10 @@ def generate_facilities_proximity_local(
             block=block,
             layer_name=layer_name,
             asset_id=asset_id,
-            dataset_name="Facilities",
+            dataset_name="Mws Centroid",
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
-            print("Sync to GeoServer flag updated for Facilities vector")
+            print("Sync to GeoServer flag updated for MWS Centroid vector")
 
     return layer_at_geoserver
