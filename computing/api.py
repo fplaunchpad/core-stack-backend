@@ -107,14 +107,23 @@ from utilities.auth_check_decorator import api_security_check
 from computing.layer_dependency.layer_generation_in_order import layer_generate_map
 from .views import layer_status, get_layers_of_workspace
 from .misc.lcw_conflict import generate_lcw_conflict_data
+from .misc.lcw_conflict_local_compute import generate_lcw_conflict_data_local as generate_lcw_conflict_data_local_task
 from .misc.agroecological_space import generate_agroecological_data
+from .misc.agroecological_space_local_compute import generate_agroecological_data_local as generate_agroecological_data_local_task
 from .misc.factory_csr import generate_factory_csr_data
+from .misc.factory_csr_local_compute import generate_factory_csr_data_local as generate_factory_csr_data_local_task
 from .misc.green_credit import generate_green_credit_data
+from .misc.green_credit_local_compute import generate_green_credit_data_local as generate_green_credit_data_local_task
 from .misc.mining_data import generate_mining_data
+from .misc.mining_data_local_compute import generate_mining_data_local as generate_mining_data_local_task
 from .misc.slope_percentage import generate_slope_percentage_data
+from .misc.slope_percentage_local_compute import generate_slope_percentage_data_local as generate_slope_percentage_data_local_task
 from .misc.naturaldepression import generate_natural_depression_data
+from .misc.naturaldepression_local_compute import generate_natural_depression_data_local as generate_natural_depression_data_local_task
 from .misc.distancetonearestdrainage import generate_distance_to_nearest_drainage_line
+from .misc.distancetonearestdrainage_local_compute import generate_distance_to_nearest_drainage_line_local as generate_distance_to_nearest_drainage_line_local_task
 from .misc.catchment_area import generate_catchment_area_singleflow
+from .misc.catchment_area_local_compute import generate_catchment_area_singleflow_local as generate_catchment_area_singleflow_local_task
 from .zoi_layers.zoi import generate_zoi
 from .mws.mws_connectivity import (
     generate_mws_connectivity_data as generate_mws_connectivity_gee_task,
@@ -123,7 +132,9 @@ from .mws.mws_connectivity_local_compute import (
     mws_connectivity_vector as generate_mws_connectivity_local_task,
 )
 from .mws.mws_centroid import generate_mws_centroid_data
+from .mws.mws_centroid_local_compute import generate_mws_centroid_data_local as generate_mws_centroid_data_local_task
 from .misc.facilities_proximity import generate_facilities_proximity_task
+from .misc.facilities_proximity_local_compute import generate_facilities_proximity_local as generate_facilities_proximity_local_task
 from .STAC_specs.stac_collection import _make_celery_task as _make_stac_task
 from django.conf import settings
 from .misc.digital_elevation_model import generate_dem_raster
@@ -140,6 +151,8 @@ from .misc.river_local_compute import river_vector as river_vector_local_task
 from .misc.drainage_density_local_compute import (
     drainage_density as drainage_density_vector_local_task,
 )
+from .misc.restoration_opportunity_local_compute import generate_restoration_opportunity_local as generate_restoration_opportunity_local_task
+from .misc.soge_vector_local_compute import generate_soge_vector_local as generate_soge_vector_local_task
 
 
 @api_security_check(allowed_methods="POST")
@@ -1089,7 +1102,13 @@ def restoration_opportunity(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_restoration_opportunity.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_restoration_opportunity,
+            generate_restoration_opportunity_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1179,7 +1198,13 @@ def soge_vector(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_soge_vector.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_soge_vector,
+            generate_soge_vector_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1448,7 +1473,13 @@ def generate_lcw(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_lcw_conflict_data.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_lcw_conflict_data,
+            generate_lcw_conflict_data_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1468,7 +1499,13 @@ def generate_agroecological(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_agroecological_data.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_agroecological_data,
+            generate_agroecological_data_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1488,7 +1525,13 @@ def generate_factory_csr(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_factory_csr_data.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_factory_csr_data,
+            generate_factory_csr_data_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1508,7 +1551,13 @@ def generate_green_credit(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_green_credit_data.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_green_credit_data,
+            generate_green_credit_data_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1528,7 +1577,13 @@ def generate_mining(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_mining_data.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_mining_data,
+            generate_mining_data_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1561,7 +1616,13 @@ def generate_natural_depression(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_natural_depression_data.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_natural_depression_data,
+            generate_natural_depression_data_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1581,7 +1642,13 @@ def generate_distance_nearest_upstream_DL(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_distance_to_nearest_drainage_line.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_distance_to_nearest_drainage_line,
+            generate_distance_to_nearest_drainage_line_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1601,7 +1668,13 @@ def generate_catchment_area_SF(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_catchment_area_singleflow.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_catchment_area_singleflow,
+            generate_catchment_area_singleflow_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1621,7 +1694,13 @@ def generate_slope_percentage(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_slope_percentage_data.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_slope_percentage_data,
+            generate_slope_percentage_data_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1736,7 +1815,13 @@ def generate_mws_centroid(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_mws_centroid_data.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_mws_centroid_data,
+            generate_mws_centroid_data_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
@@ -1756,7 +1841,13 @@ def generate_facilities_proximity(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        generate_facilities_proximity_task.apply_async(
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            generate_facilities_proximity_task,
+            generate_facilities_proximity_local_task,
+        )
+        task.apply_async(
             args=[state, district, block, gee_account_id], queue="nrm"
         )
         return Response(
