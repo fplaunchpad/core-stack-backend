@@ -94,24 +94,47 @@ def resolve_precomputed_vector_file(
     )
 
 
+from utilities.download_gpkg_from_geoserver import generate_mws_gpkg
+
+
 def load_precomputed_watersheds(
     state,
     district,
     block,
     precomputed_roi_dir=PRECOMPUTED_TEHSIL_WATERSHED_DIR,
 ):
-    watershed_path = resolve_precomputed_vector_file(
-        state=state,
-        district=district,
-        block=block,
-        precomputed_roi_dir=precomputed_roi_dir,
-        missing_file_label="Precomputed watershed boundary file",
-    )
+    try:
+        watershed_path = resolve_precomputed_vector_file(
+            state=state,
+            district=district,
+            block=block,
+            precomputed_roi_dir=precomputed_roi_dir,
+            missing_file_label="Precomputed watershed boundary file",
+        )
+
+    except FileNotFoundError:
+
+        print(f"Precomputed watershed not found for " f"{state}/{district}/{block}")
+
+        # Generate dynamically
+        generate_mws_gpkg(state=state, district=district, block=block)
+
+        # Retry after generation
+        watershed_path = resolve_precomputed_vector_file(
+            state=state,
+            district=district,
+            block=block,
+            precomputed_roi_dir=precomputed_roi_dir,
+            missing_file_label="Generated watershed boundary file not found",
+        )
+
     watersheds_gdf = read_validated_vector_file(
         watershed_path,
         f"Precomputed watershed file has no valid geometries: {watershed_path}",
     )
+
     print(f"Loaded watershed boundaries: {watershed_path}")
+
     return watersheds_gdf, str(watershed_path)
 
 
