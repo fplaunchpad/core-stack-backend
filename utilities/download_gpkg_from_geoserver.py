@@ -53,13 +53,27 @@ def read_layer_from_geoserver(layer_name):
         "srsName": "EPSG:4326",
     }
 
+    geoserver_url = settings.PROD_GEOSERVER_URL.rstrip('/')
+    wfs_url = f"{geoserver_url}/wfs"
+
+    # Some workspaces might be protected, use auth if available
+    auth = None
+    if hasattr(settings, "GEOSERVER_USER") and hasattr(settings, "GEOSERVER_PASSWORD"):
+        auth = (settings.GEOSERVER_USER, settings.GEOSERVER_PASSWORD)
+
     response = requests.get(
-        settings.PROD_GEOSERVER_URL,
+        wfs_url,
         params=params,
-        auth=None,
+        auth=auth,
         timeout=120,
         verify=False,
     )
+    
+    response.raise_for_status()
+
+    # Verify we actually got JSON and not an HTML redirect page
+    if "text/html" in response.headers.get("Content-Type", ""):
+        raise ValueError(f"GeoServer returned HTML instead of JSON. Check the WFS URL and layer name: {layer_name}")
 
     return gpd.read_file(response.text)
 
