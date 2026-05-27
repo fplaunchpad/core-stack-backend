@@ -51,6 +51,14 @@ def _compute_factory_csr_for_watersheds(watersheds_gdf, factory_gdf):
     if "index_right" in joined_gdf.columns:
         joined_gdf = joined_gdf.drop(columns=["index_right"])
 
+    target_cols = [
+        "ADDRESS", "COMPANY NA", "LAT", "LEVEL 1", "LEVEL 2",
+        "LEVEL 3", "LNG", "LOCATION T", "UUID", "Unnamed_ 9",
+        "uid", "geometry"
+    ]
+    cols_to_keep = [col for col in target_cols if col in joined_gdf.columns]
+    joined_gdf = joined_gdf[cols_to_keep]
+
     return joined_gdf
 
 
