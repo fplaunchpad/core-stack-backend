@@ -655,7 +655,7 @@ def _update_layer_sync_remote(
     if not prod_url or layer_id is None:
         return
 
-    endpoint = prod_url + "/api/v1/computing/update_layer_sync_remote/"
+    endpoint = prod_url + "/api/v1/update_layer_sync_remote/"
     payload = {
         "layer_id": layer_id,
         "sync_to_geoserver": sync_to_geoserver,
