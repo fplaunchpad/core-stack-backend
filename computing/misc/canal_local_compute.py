@@ -22,35 +22,28 @@ from computing.utils import (
     fix_invalid_geometry_in_gdf,
 )
 
-CANAL_VECTOR_PATH = PROJECT_ROOT / "data/canal/Canal_pan_india.geojson"
-LOCAL_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/canal/canal_local"
+from computing.config_loader import (
+    PAN_INDIA_CANAL_PATH,
+    LOCAL_CANAL_OUTPUT,
+)
+
 GEOSERVER_WORKSPACE = "canal"
 
 
 def _compute_canal_properties_for_watersheds(watersheds_gdf, canals_gdf):
-    """
-    Mirroring the logic of canal_layer.py (GEE):
-    1. Clips canals to ROI boundaries.
-    2. Separates matched canals (inside watersheds) and gap canals (outside watersheds but inside ROI).
-    3. Produces a Line layer with MWS UID and area attached to each segment.
-    """
     watersheds_gdf = validate_geometry(watersheds_gdf)
     canals_gdf = validate_geometry(canals_gdf)
 
-    # CRITICAL: Reset index to ensure unique mapping for intersection
     watersheds_gdf = watersheds_gdf.reset_index(drop=True)
-
-    # ── Outer dissolved boundary of the entire ROI ─────────────────
     outer_boundary = watersheds_gdf.geometry.unary_union
 
-    # ── Step 1: Filter canals that touch the outer boundary ────────
     canals_in_roi = canals_gdf[canals_gdf.intersects(outer_boundary)].copy()
 
     if canals_in_roi.empty:
         print("No canals found within the outer boundary.")
         return canals_in_roi
 
-    # ── Step 2: For each canal, collect every watershed it touches ──
+    # For each canal, collect every watershed it touches
     matched_joined = gpd.sjoin(
         canals_in_roi,
         watersheds_gdf[["uid", "area_in_ha", "geometry"]],
@@ -58,18 +51,15 @@ def _compute_canal_properties_for_watersheds(watersheds_gdf, canals_gdf):
         predicate="intersects",
     )
 
-    # ── Step 3: Identify Gap Canals (no watershed match) ───────────
+    #Identify Gap Canals (no watershed match)
     matched_indices = matched_joined.index.unique()
     gap_canals = canals_in_roi.loc[~canals_in_roi.index.isin(matched_indices)].copy()
 
     result_segments = []
 
-    # ── Step 4: Expand matched canals → clip to individual watersheds ──
+    # Expand matched canals → clip to individual watersheds
     if not matched_joined.empty:
-        print(f"Clipping {len(matched_joined)} matched canal segments...")
-
         def clip_matched(row):
-            # Using the unique index from watersheds_gdf to get geometry
             watershed_geom = watersheds_gdf.geometry.iloc[row.index_right]
             return row.geometry.intersection(watershed_geom)
 
@@ -80,9 +70,8 @@ def _compute_canal_properties_for_watersheds(watersheds_gdf, canals_gdf):
         ]
         result_segments.append(matched_joined)
 
-    # ── Step 5: Handle gap canals → clip to outer ROI boundary ─────
+    #Handle gap canals → clip to outer ROI boundary 
     if not gap_canals.empty:
-        print(f"Clipping {len(gap_canals)} gap canal segments...")
         gap_canals["uid"] = ""
         gap_canals["area_in_ha"] = ""
 
@@ -98,17 +87,11 @@ def _compute_canal_properties_for_watersheds(watersheds_gdf, canals_gdf):
     if not result_segments:
         return gpd.GeoDataFrame(columns=canals_gdf.columns, crs=canals_gdf.crs)
 
-    # ── Step 6: Merge, Clean and Fix Geometries ─────────────────────
+    # Merge, Clean and Fix Geometries
     final_gdf = gpd.GeoDataFrame(pd.concat(result_segments, ignore_index=True), crs=canals_gdf.crs)
-    
-    # Cast to string to ensure database/geoserver compatibility
     final_gdf["uid"] = final_gdf["uid"].astype(str)
     final_gdf["area_in_ha"] = final_gdf["area_in_ha"].astype(str)
-
-    # Filter out empty
     final_gdf = final_gdf[~final_gdf.geometry.is_empty]
-    
-    # Clean geometries using the same helper as GEE pipeline
     final_gdf = fix_invalid_geometry_in_gdf(final_gdf)
 
     if "index_right" in final_gdf.columns:
@@ -117,25 +100,24 @@ def _compute_canal_properties_for_watersheds(watersheds_gdf, canals_gdf):
     return final_gdf
 
 
-def run_canal_vector_local(
+@app.task(bind=True)
+def canal_vector(
+    self,
     state=None,
     district=None,
     block=None,
     asset_suffix=None,
     roi=None,
-    canal_vector_path=CANAL_VECTOR_PATH,
+    asset_folder_list=None,
+    app_type="MWS",
+    gee_account_id=None,
+    canal_vector_path=PAN_INDIA_CANAL_PATH,
     precomputed_roi_dir=None,
     push_to_geoserver=True,
     sync_layer_metadata=True,
 ):
-    """
-    Orchestrates the local canal vector generation.
-    """
     if state and district and block:
-        layer_name = (
-            f"{valid_gee_text(str(district).strip().lower())}_"
-            f"{valid_gee_text(str(block).strip().lower())}_canal_vector"
-        )
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_canal_vector"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -174,7 +156,7 @@ def run_canal_vector_local(
         state=state,
         district=district,
         block=block,
-        output_base_dir=LOCAL_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_CANAL_OUTPUT,
     )
 
     asset_id = write_vector_output(
@@ -201,6 +183,7 @@ def run_canal_vector_local(
             layer_name=layer_name,
             asset_id=asset_id,
             dataset_name="Canal Vector",
+            misc={"is_generated_locally": True},
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
@@ -209,29 +192,3 @@ def run_canal_vector_local(
     return True
 
 
-@app.task(bind=True)
-def canal_vector(
-    self,
-    state=None,
-    district=None,
-    block=None,
-    asset_suffix=None,
-    roi=None,
-    asset_folder_list=None,
-    app_type="MWS",
-    gee_account_id=None,
-):
-    """
-    Celery task for local canal vector generation.
-    Matches signature of canal_layer.py
-    """
-    _ = self, asset_folder_list, app_type, gee_account_id
-    return run_canal_vector_local(
-        state=state,
-        district=district,
-        block=block,
-        asset_suffix=asset_suffix,
-        roi=roi,
-        push_to_geoserver=True,
-        sync_layer_metadata=True,
-    )

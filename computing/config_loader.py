@@ -8,3 +8,6 @@ PAN_INDIA_DRAINAGE_LINES_GPKG_PATH = (
 )
 
 LOCAL_DRAINAGE_DENSITY_OUTPUT = PROJECT_ROOT / "data/drainage_density"
+
+PAN_INDIA_CANAL_PATH = PROJECT_ROOT / "data/canal/Canal_pan_india.geojson"
+LOCAL_CANAL_OUTPUT = PROJECT_ROOT / "data/canal/canal_local"

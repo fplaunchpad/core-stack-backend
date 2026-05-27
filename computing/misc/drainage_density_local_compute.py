@@ -129,11 +129,7 @@ def drainage_density(
     Produces MWS polygons with drainage_density attributes.
     """
     if state and district and block:
-        layer_name = (
-            f"{valid_gee_text(str(district).strip().lower())}_"
-            f"{valid_gee_text(str(block).strip().lower())}_"
-            f"drainage_density_vector"
-        )
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_drainage_density"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,

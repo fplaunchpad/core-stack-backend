@@ -74,7 +74,6 @@ def clip_drainage_lines(
     """
     Orchestrates the local drainage lines vector generation.
     """
-    _ = self, asset_folder, gee_account_id, app_type
 
     if state and district and block:
         layer_name = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_25may"
@@ -141,6 +140,7 @@ def clip_drainage_lines(
                 layer_name=layer_name,
                 asset_id=asset_id,
                 dataset_name="Drainage",
+                misc={"is_generated_locally": True},
             )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
