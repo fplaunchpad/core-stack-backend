@@ -50,7 +50,7 @@ def run_raster_restoration_local(
     sync_layer_metadata=True,
 ):
     if state and district and block:
-        layer_name = f"restoration_{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_raster_27may"
+        layer_name = f"restoration_{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_raster"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -140,7 +140,7 @@ def run_vector_restoration_local(
         raise ValueError("`raster_path` is required for vector stage.")
 
     if state and district and block:
-        layer_name = f"restoration_{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_vector_27may"
+        layer_name = f"restoration_{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_vector"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,

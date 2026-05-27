@@ -18,10 +18,11 @@ from computing.local_compute_helper import (
 )
 from computing.STAC_specs import generate_STAC_layerwise
 
-SOGE_PAN_INDIA_LOCAL_PATH = (
-    PROJECT_ROOT / "data/base_layers/Pan_India_SOGE_2020.geojson"
+from computing.config_loader import (
+    PAN_INDIA_SOGE_PATH,
+    LOCAL_SOGE_OUTPUT,
 )
-SOGE_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/layers/SOGE_vector"
+
 GEOSERVER_WORKSPACE = "soge"
 
 
@@ -120,9 +121,8 @@ def generate_soge_vector_local(
     push_to_geoserver=True,
     sync_layer_metadata=True,
 ):
-    _ = self, gee_account_id
     if state and district and block:
-        layer_name = f"soge_vector_{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}"
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_soge_vector_27may"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -137,14 +137,14 @@ def generate_soge_vector_local(
         watersheds_gdf = read_validated_vector_file(roi_path, f"Invalid ROI file: {roi_path}")
         print(f"ROI source: {roi_path}")
 
-    if not os.path.exists(SOGE_PAN_INDIA_LOCAL_PATH):
-        print(f"Warning: PAN INDIA SOGE file not found at {SOGE_PAN_INDIA_LOCAL_PATH}. Proceeding with No Data.")
+    if not os.path.exists(PAN_INDIA_SOGE_PATH):
+        print(f"Warning: PAN INDIA SOGE file not found at {PAN_INDIA_SOGE_PATH}. Proceeding with No Data.")
         # Create empty dummy GDF
         soge_gdf = gpd.GeoDataFrame(geometry=[])
     else:
         print("Loading SOGE data overlapping ROI...")
         soge_gdf = read_validated_vector_file(
-            SOGE_PAN_INDIA_LOCAL_PATH,
+            PAN_INDIA_SOGE_PATH,
             "PAN INDIA SOGE file has no valid geometries overlapping ROI",
             mask=watersheds_gdf,
         )
@@ -161,7 +161,7 @@ def generate_soge_vector_local(
         state=state,
         district=district,
         block=block,
-        output_base_dir=SOGE_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_SOGE_OUTPUT,
     )
 
     asset_id = write_vector_output(
@@ -192,6 +192,7 @@ def generate_soge_vector_local(
             layer_name=layer_name,
             asset_id=asset_id,
             dataset_name="SOGE",
+            misc={"is_generated_locally": True},
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
