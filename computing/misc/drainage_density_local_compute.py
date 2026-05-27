@@ -51,7 +51,9 @@ def _load_drainage_lines_for_roi(watersheds_gdf):
     print(f"Loading drainage lines from: {DRAINAGE_LINES_GPKG_PATH}")
     if not os.path.exists(DRAINAGE_LINES_GPKG_PATH):
         # Fallback to checking common locations if the exact path is missing
-        print(f"Warning: {DRAINAGE_LINES_GPKG_PATH} not found. Drainage density calculation will fail.")
+        print(
+            f"Warning: {DRAINAGE_LINES_GPKG_PATH} not found. Drainage density calculation will fail."
+        )
 
     lines_gdf = gpd.read_file(DRAINAGE_LINES_GPKG_PATH, bbox=bbox_geom)
     print(f"Loaded {len(lines_gdf)} drainage line features within bounding box")
@@ -98,8 +100,12 @@ def _compute_drainage_density(watersheds_gdf, drainage_lines_gdf):
 
         # Store results as strings of lists to match GEE output
         watersheds_gdf.at[index, "drainage_density"] = float(sum(stream_dd.values()))
-        watersheds_gdf.at[index, "drainage_density_stream"] = str([float(v) for v in stream_dd.values()])
-        watersheds_gdf.at[index, "stream_length_km"] = str([float(v) for v in stream_length.values()])
+        watersheds_gdf.at[index, "drainage_density_stream"] = str(
+            [float(v) for v in stream_dd.values()]
+        )
+        watersheds_gdf.at[index, "stream_length_km"] = str(
+            [float(v) for v in stream_length.values()]
+        )
 
     # Restore geographic CRS
     watersheds_gdf = watersheds_gdf.to_crs(crs=4326)
@@ -184,7 +190,7 @@ def run_drainage_density_local(
             block=block,
             layer_name=layer_name,
             asset_id=asset_id,
-            dataset_name="Drainage Density",
+            dataset_name="Drainage Density Vector",
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
