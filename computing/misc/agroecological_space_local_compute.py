@@ -68,7 +68,7 @@ def generate_agroecological_data_local(
     sync_layer_metadata=True,
 ):
     if state and district and block:
-        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_agroecological_27may"
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_agroecological"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,

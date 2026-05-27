@@ -24,6 +24,15 @@ LOCAL_LCW_OUTPUT = PROJECT_ROOT / "data/layers/lcw_conflict"
 PAN_INDIA_SOGE_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_SOGE_2020.geojson"
 LOCAL_SOGE_OUTPUT = PROJECT_ROOT / "data/layers/SOGE_vector"
 
+PAN_INDIA_FACTORY_CSR_PATH = PROJECT_ROOT / "data/base_layers/pan_india_factory_csr.gpkg"
+LOCAL_FACTORY_CSR_OUTPUT = PROJECT_ROOT / "data/layers/factory_csr"
+
+PAN_INDIA_GREEN_CREDIT_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_green_credit.geojson"
+LOCAL_GREEN_CREDIT_OUTPUT = PROJECT_ROOT / "data/layers/green_credit"
+
+PAN_INDIA_MINING_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_mining.geojson"
+LOCAL_MINING_OUTPUT = PROJECT_ROOT / "data/layers/mining"
+
 PAN_INDIA_RESTORATION_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_WRI_Restoration.tif"
 LOCAL_RESTORATION_OUTPUT = PROJECT_ROOT / "data/layers/restoration_opportunity"
 

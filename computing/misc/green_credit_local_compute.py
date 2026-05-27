@@ -14,13 +14,13 @@ from computing.local_compute_helper import (
     load_precomputed_watersheds,
     read_validated_vector_file,
     write_vector_output,
+    validate_geometry,
+)
+from computing.config_loader import (
+    PAN_INDIA_GREEN_CREDIT_PATH,
+    LOCAL_GREEN_CREDIT_OUTPUT,
 )
 
-
-GREEN_CREDIT_PAN_INDIA_LOCAL_PATH = (
-    PROJECT_ROOT / "data/base_layers/Pan_India_green_credit.geojson"
-)
-GREEN_CREDIT_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/layers/green_credit"
 GEOSERVER_WORKSPACE = "green_credit"
 
 
@@ -67,9 +67,8 @@ def generate_green_credit_data_local(
     push_to_geoserver=True,
     sync_layer_metadata=True,
 ):
-    _ = self, gee_account_id
     if state and district and block:
-        layer_name = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_green_credit"
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_green_credit_27may"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -80,19 +79,18 @@ def generate_green_credit_data_local(
     else:
         if not roi_path or not asset_suffix:
             raise ValueError("ROI path and asset_suffix are required for custom runs.")
-        layer_name = f"{asset_suffix}_green_credit".lower()
+        layer_name = f"{valid_gee_text(asset_suffix).lower()}_green_credit"
         watersheds_gdf = read_validated_vector_file(roi_path, f"Invalid ROI file: {roi_path}")
         print(f"ROI source: {roi_path}")
 
-    if not os.path.exists(GREEN_CREDIT_PAN_INDIA_LOCAL_PATH):
-        raise FileNotFoundError(f"PAN INDIA Green Credit file not found at {GREEN_CREDIT_PAN_INDIA_LOCAL_PATH}")
+    if not os.path.exists(PAN_INDIA_GREEN_CREDIT_PATH):
+        raise FileNotFoundError(f"PAN INDIA Green Credit file not found at {PAN_INDIA_GREEN_CREDIT_PATH}")
 
     print("Loading Green Credit data overlapping ROI...")
-    green_credit_gdf = read_validated_vector_file(
-        GREEN_CREDIT_PAN_INDIA_LOCAL_PATH,
-        "PAN INDIA Green Credit file has no valid geometries overlapping ROI",
-        mask=watersheds_gdf,
-    )
+    green_credit_gdf = gpd.read_file(PAN_INDIA_GREEN_CREDIT_PATH, mask=watersheds_gdf)
+    green_credit_gdf = validate_geometry(green_credit_gdf)
+    if green_credit_gdf.empty:
+        print("Warning: PAN INDIA Green Credit file has no valid geometries overlapping ROI")
     print(f"Loaded {len(green_credit_gdf)} Green Credit features")
 
     result_gdf = _compute_green_credit_for_watersheds(
@@ -106,7 +104,7 @@ def generate_green_credit_data_local(
         state=state,
         district=district,
         block=block,
-        output_base_dir=GREEN_CREDIT_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_GREEN_CREDIT_OUTPUT,
     )
 
     asset_id = write_vector_output(
@@ -137,6 +135,7 @@ def generate_green_credit_data_local(
             layer_name=layer_name,
             asset_id=asset_id,
             dataset_name="Green Credit",
+            misc={"is_generated_locally": True},
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)

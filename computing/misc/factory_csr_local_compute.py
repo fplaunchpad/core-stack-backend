@@ -14,13 +14,13 @@ from computing.local_compute_helper import (
     load_precomputed_watersheds,
     read_validated_vector_file,
     write_vector_output,
+    validate_geometry,
+)
+from computing.config_loader import (
+    PAN_INDIA_FACTORY_CSR_PATH,
+    LOCAL_FACTORY_CSR_OUTPUT,
 )
 
-
-FACTORY_CSR_PAN_INDIA_LOCAL_PATH = (
-    PROJECT_ROOT / "data/base_layers/pan_india_factory_csr.gpkg"
-)
-FACTORY_CSR_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/layers/factory_csr"
 GEOSERVER_WORKSPACE = "factory_csr"
 
 
@@ -67,9 +67,8 @@ def generate_factory_csr_data_local(
     push_to_geoserver=True,
     sync_layer_metadata=True,
 ):
-    _ = self, gee_account_id
     if state and district and block:
-        layer_name = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_factory_csr"
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_factory_csr_27may"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -80,19 +79,18 @@ def generate_factory_csr_data_local(
     else:
         if not roi_path or not asset_suffix:
             raise ValueError("ROI path and asset_suffix are required for custom runs.")
-        layer_name = f"{asset_suffix}_factory_csr".lower()
+        layer_name = f"{valid_gee_text(asset_suffix).lower()}_factory_csr"
         watersheds_gdf = read_validated_vector_file(roi_path, f"Invalid ROI file: {roi_path}")
         print(f"ROI source: {roi_path}")
 
-    if not os.path.exists(FACTORY_CSR_PAN_INDIA_LOCAL_PATH):
-        raise FileNotFoundError(f"PAN INDIA Factory CSR file not found at {FACTORY_CSR_PAN_INDIA_LOCAL_PATH}")
+    if not os.path.exists(PAN_INDIA_FACTORY_CSR_PATH):
+        raise FileNotFoundError(f"PAN INDIA Factory CSR file not found at {PAN_INDIA_FACTORY_CSR_PATH}")
 
     print("Loading Factory CSR data overlapping ROI...")
-    factory_gdf = read_validated_vector_file(
-        FACTORY_CSR_PAN_INDIA_LOCAL_PATH,
-        "PAN INDIA Factory CSR file has no valid geometries overlapping ROI",
-        mask=watersheds_gdf,
-    )
+    factory_gdf = gpd.read_file(PAN_INDIA_FACTORY_CSR_PATH, mask=watersheds_gdf)
+    factory_gdf = validate_geometry(factory_gdf)
+    if factory_gdf.empty:
+        print("Warning: PAN INDIA Factory CSR file has no valid geometries overlapping ROI")
     print(f"Loaded {len(factory_gdf)} Factory CSR features")
 
     result_gdf = _compute_factory_csr_for_watersheds(
@@ -106,7 +104,7 @@ def generate_factory_csr_data_local(
         state=state,
         district=district,
         block=block,
-        output_base_dir=FACTORY_CSR_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_FACTORY_CSR_OUTPUT,
     )
 
     asset_id = write_vector_output(
@@ -137,6 +135,7 @@ def generate_factory_csr_data_local(
             layer_name=layer_name,
             asset_id=asset_id,
             dataset_name="Factory CSR",
+            misc={"is_generated_locally": True},
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
