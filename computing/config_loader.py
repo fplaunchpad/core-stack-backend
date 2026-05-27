@@ -33,6 +33,15 @@ LOCAL_GREEN_CREDIT_OUTPUT = PROJECT_ROOT / "data/layers/green_credit"
 PAN_INDIA_MINING_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_mining.geojson"
 LOCAL_MINING_OUTPUT = PROJECT_ROOT / "data/layers/mining"
 
+PAN_INDIA_NATURALDEPRESSION_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_natural_depression.tif"
+LOCAL_NATURALDEPRESSION_OUTPUT = PROJECT_ROOT / "data/layers/natural_depression"
+
+PAN_INDIA_DISTANCETONEARESTDRAINAGE_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_distance_to_nearest_drainage.tif"
+LOCAL_DISTANCETONEARESTDRAINAGE_OUTPUT = PROJECT_ROOT / "data/layers/distance_nearest_upstream_DL"
+
+PAN_INDIA_FACILITIES_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_facilities_polygon.geojson"
+LOCAL_FACILITIES_OUTPUT = PROJECT_ROOT / "data/layers/facilities"
+
 PAN_INDIA_RESTORATION_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_WRI_Restoration.tif"
 LOCAL_RESTORATION_OUTPUT = PROJECT_ROOT / "data/layers/restoration_opportunity"
 

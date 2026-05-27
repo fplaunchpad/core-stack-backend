@@ -14,11 +14,11 @@ from computing.local_compute_helper import (
     push_local_raster_to_geoserver,
 )
 from computing.STAC_specs import generate_STAC_layerwise
-
-DISTANCE_TO_DRAINAGE_PAN_INDIA_LOCAL_PATH = (
-    PROJECT_ROOT / "data/base_layers/Pan_India_distance_to_nearest_drainage.tif"
+from computing.config_loader import (
+    PAN_INDIA_DISTANCETONEARESTDRAINAGE_PATH,
+    LOCAL_DISTANCETONEARESTDRAINAGE_OUTPUT,
 )
-DISTANCE_TO_DRAINAGE_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/layers/distance_nearest_upstream_DL"
+
 GEOSERVER_WORKSPACE = "distance_nearest_upstream_DL"
 DISTANCE_TO_DRAINAGE_STYLE_NAME = "distance_nearest_upstream_DL"
 
@@ -35,9 +35,8 @@ def generate_distance_to_nearest_drainage_line_local(
     push_to_geoserver=True,
     sync_layer_metadata=True,
 ):
-    _ = self, gee_account_id
     if state and district and block:
-        layer_name_base = f"distance_to_drainage_line_{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}"
+        layer_name_base = f"distance_to_drainage_line_{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_raster_27may"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -48,15 +47,15 @@ def generate_distance_to_nearest_drainage_line_local(
     else:
         if not roi_path or not asset_suffix:
             raise ValueError("ROI path and asset_suffix are required for custom runs.")
-        layer_name_base = f"{asset_suffix}_distance_to_drainage_line".lower()
+        layer_name_base = f"distance_to_drainage_line_{valid_gee_text(asset_suffix).lower()}_raster_27may"
         watersheds_gdf = read_validated_vector_file(roi_path, f"Invalid ROI file: {roi_path}")
         print(f"ROI source: {roi_path}")
 
     # Raster Processing
-    raster_layer_name = f"{layer_name_base}_raster"
+    raster_layer_name = f"{layer_name_base}"
     output_raster_path = build_output_raster_path(
         layer_name=raster_layer_name,
-        output_base_dir=DISTANCE_TO_DRAINAGE_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_DISTANCETONEARESTDRAINAGE_OUTPUT,
         state=state,
         district=district,
         block=block,
@@ -65,7 +64,7 @@ def generate_distance_to_nearest_drainage_line_local(
     print("Clipping Distance to Nearest Drainage Line raster...")
     clipped_raster_path = clip_raster_with_roi(
         roi_gdf=watersheds_gdf,
-        raster_path=DISTANCE_TO_DRAINAGE_PAN_INDIA_LOCAL_PATH,
+        raster_path=PAN_INDIA_DISTANCETONEARESTDRAINAGE_PATH,
         output_path=output_raster_path,
         raster_label="Distance to Drainage Line Raster",
     )
@@ -90,6 +89,7 @@ def generate_distance_to_nearest_drainage_line_local(
             layer_name=raster_layer_name,
             asset_id=str(clipped_raster_path),
             dataset_name="Distance to Drainage Line",
+            misc={"is_generated_locally": True},
         )
         if raster_layer_id:
             update_layer_sync_status(layer_id=raster_layer_id, sync_to_geoserver=True)
