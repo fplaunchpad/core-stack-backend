@@ -32,9 +32,9 @@ RESTORATION_STYLE_NAME = "restoration_style"
 
 
 RESTORATION_CLASSES = [
-    {"value": 0, "label": "Excluded Areas"},
-    {"value": 1, "label": "Mosaic Restoration"},
-    {"value": 2, "label": "Wide-scale Restoration"},
+    {"value": 0, "label": "Excluded A"},
+    {"value": 1, "label": "Mosaic Res"},
+    {"value": 2, "label": "Wide-scale"},
     {"value": 3, "label": "Protection"},
 ]
 
@@ -50,7 +50,7 @@ def run_raster_restoration_local(
     sync_layer_metadata=True,
 ):
     if state and district and block:
-        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_restoration_raster_27may"
+        layer_name = f"restoration_{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_raster_27may"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -140,7 +140,7 @@ def run_vector_restoration_local(
         raise ValueError("`raster_path` is required for vector stage.")
 
     if state and district and block:
-        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_restoration_vector_27may"
+        layer_name = f"restoration_{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_vector_27may"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -160,6 +160,19 @@ def run_vector_restoration_local(
         raster_path=raster_path,
         class_definitions=RESTORATION_CLASSES,
     )
+
+    desired_cols = [
+        "uid", 
+        "id", 
+        "area_in_ha", 
+        "Excluded A", 
+        "Mosaic Res", 
+        "Protection", 
+        "Wide-scale", 
+        "geometry"
+    ]
+    keep_cols = [c for c in desired_cols if c in vector_result_gdf.columns]
+    vector_result_gdf = vector_result_gdf[keep_cols]
 
     output_vector_path = build_output_vector_path(
         layer_name=layer_name,
