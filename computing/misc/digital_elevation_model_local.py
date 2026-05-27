@@ -128,18 +128,6 @@ def run_raster_fabdem_local(
 
     if push_to_geoserver:
         try:
-            # from utilities.geoserver_utils import Geoserver
-            # geo = Geoserver()
-            # for ws in ("ne", GEOSERVER_WORKSPACE):
-            #     try:
-            #         geo.delete_raster_store(layer_name, workspace=ws)
-            #         print(
-            #             f"Deleted stale raster store '{layer_name}' from workspace '{ws}'"
-            #         )
-            #     except Exception:
-            #         pass
-
-            # Step 2 — Upload raster → creates coveragestore
             upload_res, style_res = push_local_raster_to_geoserver(
                 file_path=clipped_raster_path,
                 layer_name=layer_name,
@@ -148,30 +136,6 @@ def run_raster_fabdem_local(
             )
             print(f"GeoServer upload response: {upload_res}")
             print(f"GeoServer style  response: {style_res}")
-
-            # Step 3 — Explicitly publish coverage as layer → appears in Layer Preview
-            try:
-                geo.publish_layer(
-                    layer_name=layer_name,
-                    workspace=GEOSERVER_WORKSPACE,
-                    store_name=layer_name,
-                    store_type="coverageStore",
-                )
-                print(f"Published raster layer '{layer_name}' to Layer Preview.")
-            except Exception as publish_err:
-                print(f"publish_layer warning (non-blocking): {publish_err}")
-
-            # Step 4 — Apply style to the published layer
-            try:
-                geo.publish_style(
-                    layer_name=layer_name,
-                    style_name=GEOSERVER_STYLE,
-                    workspace=GEOSERVER_WORKSPACE,
-                )
-                print(f"Style '{GEOSERVER_STYLE}' applied to '{layer_name}'.")
-            except Exception as style_err:
-                print(f"publish_style warning (non-blocking): {style_err}")
-
         except Exception as error:
             print(f"Failed to sync local FABDEM raster to GeoServer: {error}")
             return False, None
