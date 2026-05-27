@@ -54,18 +54,23 @@ def _compute_factory_csr_for_watersheds(watersheds_gdf, factory_gdf):
     rename_map = {}
     for col in joined_gdf.columns:
         cl = col.lower().strip()
-        if cl == "lat": rename_map[col] = "LAT"
-        elif cl == "lng": rename_map[col] = "LNG"
-        elif cl in ["company_na", "company na", "company_name"]: rename_map[col] = "COMPANY NA"
-        elif cl in ["location n", "location_n", "location t", "location_t"]: rename_map[col] = "LOCATION T"
+        if cl in ["company_na", "company na", "company name", "company_name"]: rename_map[col] = "COMPANY NA"
+        elif cl in ["location n", "location_n", "location t", "location_t", "location type", "location_type"]: rename_map[col] = "LOCATION T"
         elif cl == "address": rename_map[col] = "ADDRESS"
         elif cl in ["level 1", "level_1"]: rename_map[col] = "LEVEL 1"
         elif cl in ["level 2", "level_2"]: rename_map[col] = "LEVEL 2"
         elif cl in ["level 3", "level_3"]: rename_map[col] = "LEVEL 3"
         elif cl == "uuid": rename_map[col] = "UUID"
-        elif "unnamed" in cl: rename_map[col] = "Unnamed_ 9"
+        elif col == "" or "unnamed" in cl: rename_map[col] = "Unnamed_ 9"
+        elif cl == "lat": rename_map[col] = "LAT"
+        elif cl in ["lng", "lon", "long", "longitude"]: rename_map[col] = "LNG"
         
     joined_gdf = joined_gdf.rename(columns=rename_map)
+
+    if "LAT" not in joined_gdf.columns and not joined_gdf.empty:
+        joined_gdf["LAT"] = joined_gdf.geometry.y
+    if "LNG" not in joined_gdf.columns and not joined_gdf.empty:
+        joined_gdf["LNG"] = joined_gdf.geometry.x
 
     target_cols = [
         "ADDRESS", "COMPANY NA", "LAT", "LEVEL 1", "LEVEL 2",
