@@ -15,6 +15,7 @@ from computing.local_compute_helper import (
     load_precomputed_watersheds,
     read_validated_vector_file,
     write_vector_output,
+    validate_geometry,
 )
 from computing.STAC_specs import generate_STAC_layerwise
 
@@ -143,11 +144,10 @@ def generate_soge_vector_local(
         soge_gdf = gpd.GeoDataFrame(geometry=[])
     else:
         print("Loading SOGE data overlapping ROI...")
-        soge_gdf = read_validated_vector_file(
-            PAN_INDIA_SOGE_PATH,
-            "PAN INDIA SOGE file has no valid geometries overlapping ROI",
-            mask=watersheds_gdf,
-        )
+        soge_gdf = gpd.read_file(PAN_INDIA_SOGE_PATH, mask=watersheds_gdf)
+        soge_gdf = validate_geometry(soge_gdf)
+        if soge_gdf.empty:
+            raise ValueError("PAN INDIA SOGE file has no valid geometries overlapping ROI")
         print(f"Loaded {len(soge_gdf)} SOGE features")
 
     result_gdf = _compute_soge_for_watersheds(
