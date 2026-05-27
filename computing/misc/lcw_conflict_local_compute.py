@@ -14,13 +14,13 @@ from computing.local_compute_helper import (
     load_precomputed_watersheds,
     read_validated_vector_file,
     write_vector_output,
+    validate_geometry,
+)
+from computing.config_loader import (
+    PAN_INDIA_LCW_PATH,
+    LOCAL_LCW_OUTPUT,
 )
 
-
-LCW_PAN_INDIA_LOCAL_PATH = (
-    PROJECT_ROOT / "data/base_layers/Pan_India_lcw_conflict.geojson"
-)
-LCW_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/layers/lcw_conflict"
 GEOSERVER_WORKSPACE = "lcw"
 
 
@@ -67,9 +67,8 @@ def generate_lcw_conflict_data_local(
     push_to_geoserver=True,
     sync_layer_metadata=True,
 ):
-    _ = self, gee_account_id
     if state and district and block:
-        layer_name = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_lcw_conflict"
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_lcw_conflict_27may"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -80,19 +79,18 @@ def generate_lcw_conflict_data_local(
     else:
         if not roi_path or not asset_suffix:
             raise ValueError("ROI path and asset_suffix are required for custom runs.")
-        layer_name = f"{asset_suffix}_lcw_conflict".lower()
+        layer_name = f"{valid_gee_text(asset_suffix).lower()}_lcw_conflict"
         watersheds_gdf = read_validated_vector_file(roi_path, f"Invalid ROI file: {roi_path}")
         print(f"ROI source: {roi_path}")
 
-    if not os.path.exists(LCW_PAN_INDIA_LOCAL_PATH):
-        raise FileNotFoundError(f"PAN INDIA LCW conflict file not found at {LCW_PAN_INDIA_LOCAL_PATH}")
+    if not os.path.exists(PAN_INDIA_LCW_PATH):
+        raise FileNotFoundError(f"PAN INDIA LCW conflict file not found at {PAN_INDIA_LCW_PATH}")
 
     print("Loading LCW conflict data overlapping ROI...")
-    lcw_gdf = read_validated_vector_file(
-        LCW_PAN_INDIA_LOCAL_PATH,
-        "PAN INDIA LCW conflict file has no valid geometries overlapping ROI",
-        mask=watersheds_gdf,
-    )
+    lcw_gdf = gpd.read_file(PAN_INDIA_LCW_PATH, mask=watersheds_gdf)
+    lcw_gdf = validate_geometry(lcw_gdf)
+    if lcw_gdf.empty:
+        raise ValueError("PAN INDIA LCW conflict file has no valid geometries overlapping ROI")
     print(f"Loaded {len(lcw_gdf)} LCW features")
 
     result_gdf = _compute_lcw_conflict_for_watersheds(
@@ -106,7 +104,7 @@ def generate_lcw_conflict_data_local(
         state=state,
         district=district,
         block=block,
-        output_base_dir=LCW_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_LCW_OUTPUT,
     )
 
     asset_id = write_vector_output(
@@ -137,6 +135,7 @@ def generate_lcw_conflict_data_local(
             layer_name=layer_name,
             asset_id=asset_id,
             dataset_name="LCW Conflict",
+            misc={"is_generated_locally": True},
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)

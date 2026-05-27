@@ -15,6 +15,12 @@ LOCAL_DRAINAGE_DENSITY_OUTPUT = PROJECT_ROOT / "data/drainage_density"
 PAN_INDIA_CANAL_PATH = PROJECT_ROOT / "data/canal/Canal_pan_india.geojson"
 LOCAL_CANAL_OUTPUT = PROJECT_ROOT / "data/canal/canal_local"
 
+PAN_INDIA_AGROECOLOGICAL_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_agroecological_farming.geojson"
+LOCAL_AGROECOLOGICAL_OUTPUT = PROJECT_ROOT / "data/layers/agroecological"
+
+PAN_INDIA_LCW_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_lcw_conflict.geojson"
+LOCAL_LCW_OUTPUT = PROJECT_ROOT / "data/layers/lcw_conflict"
+
 PAN_INDIA_SOGE_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_SOGE_2020.geojson"
 LOCAL_SOGE_OUTPUT = PROJECT_ROOT / "data/layers/SOGE_vector"
 

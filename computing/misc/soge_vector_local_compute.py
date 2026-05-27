@@ -123,7 +123,7 @@ def generate_soge_vector_local(
     sync_layer_metadata=True,
 ):
     if state and district and block:
-        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_soge_vector_27may"
+        layer_name = f"soge_vector_{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -134,7 +134,7 @@ def generate_soge_vector_local(
     else:
         if not roi_path or not asset_suffix:
             raise ValueError("ROI path and asset_suffix are required for custom runs.")
-        layer_name = f"{asset_suffix}_soge_vector".lower()
+        layer_name = f"soge_vector_{asset_suffix}".lower()
         watersheds_gdf = read_validated_vector_file(roi_path, f"Invalid ROI file: {roi_path}")
         print(f"ROI source: {roi_path}")
 
