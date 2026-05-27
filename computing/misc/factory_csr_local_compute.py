@@ -51,6 +51,22 @@ def _compute_factory_csr_for_watersheds(watersheds_gdf, factory_gdf):
     if "index_right" in joined_gdf.columns:
         joined_gdf = joined_gdf.drop(columns=["index_right"])
 
+    rename_map = {}
+    for col in joined_gdf.columns:
+        cl = col.lower().strip()
+        if cl == "lat": rename_map[col] = "LAT"
+        elif cl == "lng": rename_map[col] = "LNG"
+        elif cl in ["company_na", "company na", "company_name"]: rename_map[col] = "COMPANY NA"
+        elif cl in ["location n", "location_n", "location t", "location_t"]: rename_map[col] = "LOCATION T"
+        elif cl == "address": rename_map[col] = "ADDRESS"
+        elif cl in ["level 1", "level_1"]: rename_map[col] = "LEVEL 1"
+        elif cl in ["level 2", "level_2"]: rename_map[col] = "LEVEL 2"
+        elif cl in ["level 3", "level_3"]: rename_map[col] = "LEVEL 3"
+        elif cl == "uuid": rename_map[col] = "UUID"
+        elif "unnamed" in cl: rename_map[col] = "Unnamed_ 9"
+        
+    joined_gdf = joined_gdf.rename(columns=rename_map)
+
     target_cols = [
         "ADDRESS", "COMPANY NA", "LAT", "LEVEL 1", "LEVEL 2",
         "LEVEL 3", "LNG", "LOCATION T", "UUID", "Unnamed_ 9",
