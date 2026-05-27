@@ -4,7 +4,6 @@ from shapely.geometry import box
 
 from nrm_app.celery import app
 from utilities.gee_utils import valid_gee_text
-from utilities.constants import DRAINAGE_DENSITY_OUTPUT
 from computing.utils import (
     push_shape_to_geoserver,
     save_layer_info_to_db,
@@ -15,13 +14,13 @@ from computing.local_compute_helper import (
     load_precomputed_watersheds,
     read_validated_vector_file,
     write_vector_output,
-    PROJECT_ROOT,
 )
 
-# Pan-India drainage LINES dataset (has ORDER column, stream order 1-11)
-DRAINAGE_LINES_GPKG_PATH = (
-    PROJECT_ROOT / "data/drainage_density/drainage_density_pan_india.gpkg"
+from computing.config_loader import (
+    PAN_INDIA_DRAINAGE_LINES_GPKG_PATH,
+    LOCAL_DRAINAGE_DENSITY_OUTPUT,
 )
+
 GEOSERVER_WORKSPACE = "drainage_density"
 
 # Influence factors for stream orders 1 to 11
@@ -48,14 +47,14 @@ def _load_drainage_lines_for_roi(watersheds_gdf):
     bounds = watersheds_gdf.geometry.total_bounds
     bbox_geom = box(*bounds)
 
-    print(f"Loading drainage lines from: {DRAINAGE_LINES_GPKG_PATH}")
-    if not os.path.exists(DRAINAGE_LINES_GPKG_PATH):
+    print(f"Loading drainage lines from: {PAN_INDIA_DRAINAGE_LINES_GPKG_PATH}")
+    if not os.path.exists(PAN_INDIA_DRAINAGE_LINES_GPKG_PATH):
         # Fallback to checking common locations if the exact path is missing
         print(
-            f"Warning: {DRAINAGE_LINES_GPKG_PATH} not found. Drainage density calculation will fail."
+            f"Warning: {PAN_INDIA_DRAINAGE_LINES_GPKG_PATH} not found. Drainage density calculation will fail."
         )
 
-    lines_gdf = gpd.read_file(DRAINAGE_LINES_GPKG_PATH, bbox=bbox_geom)
+    lines_gdf = gpd.read_file(PAN_INDIA_DRAINAGE_LINES_GPKG_PATH, bbox=bbox_geom)
     print(f"Loaded {len(lines_gdf)} drainage line features within bounding box")
     return lines_gdf
 
@@ -91,7 +90,6 @@ def _compute_drainage_density(watersheds_gdf, drainage_lines_gdf):
             order_lines = clipped_lines[clipped_lines["ORDER"] == stream_order]
             # Total length in km
             length_km = order_lines.geometry.length.sum() / 1000
-
             # Weighted drainage density for this stream order (formula from GEE version)
             dd = length_km * factor * 100 / area_km2
 
@@ -112,12 +110,16 @@ def _compute_drainage_density(watersheds_gdf, drainage_lines_gdf):
     return watersheds_gdf
 
 
-def run_drainage_density_local(
+@app.task(bind=True)
+def drainage_density(
+    self,
     state=None,
     district=None,
     block=None,
     asset_suffix=None,
     roi=None,
+    app_type="MWS",
+    gee_account_id=None,
     precomputed_roi_dir=None,
     push_to_geoserver=True,
     sync_layer_metadata=True,
@@ -152,17 +154,15 @@ def run_drainage_density_local(
         print(f"Error loading drainage lines: {e}")
         return False
 
-    # 2. Compute drainage_density per watershed
     print("Computing drainage density per watershed...")
     result_gdf = _compute_drainage_density(watersheds_gdf, drainage_lines_gdf)
 
-    # 3. Save result vector (MWS polygons with drainage_density attributes)
     output_path = build_output_vector_path(
         layer_name=layer_name,
         state=state,
         district=district,
         block=block,
-        output_base_dir=DRAINAGE_DENSITY_OUTPUT,
+        output_base_dir=LOCAL_DRAINAGE_DENSITY_OUTPUT,
     )
 
     asset_id = write_vector_output(
@@ -180,7 +180,6 @@ def run_drainage_density_local(
             layer_name=layer_name,
             file_type="gpkg",
         )
-        print(f"GeoServer response: {geoserver_response}")
 
     # 5. Sync to database
     if sync_layer_metadata and state and district and block:
@@ -191,34 +190,10 @@ def run_drainage_density_local(
             layer_name=layer_name,
             asset_id=asset_id,
             dataset_name="Drainage Density Vector",
+            misc={"is_generated_locally": True},
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
-            print(f"Database record updated for layer_id: {layer_id}")
+            print(f"Data updated for layer_id: {layer_id}")
 
     return True
-
-
-@app.task(bind=True)
-def drainage_density(
-    self,
-    state=None,
-    district=None,
-    block=None,
-    asset_suffix=None,
-    roi=None,
-    asset_folder_list=None,
-    app_type="MWS",
-    gee_account_id=None,
-):
-    """
-    Celery task wrapper for local drainage density.
-    """
-    _ = self, asset_folder_list, app_type, gee_account_id
-    return run_drainage_density_local(
-        state=state,
-        district=district,
-        block=block,
-        asset_suffix=asset_suffix,
-        roi=roi,
-    )
