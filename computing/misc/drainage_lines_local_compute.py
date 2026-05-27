@@ -19,12 +19,11 @@ from computing.utils import (
 )
 from projects.models import Project
 
-DRAINAGE_LINES_PATH = (
-    PROJECT_ROOT / "data/layers/drainage_lines/Pan_India_drainage_lines.gpkg"
+from computing.config_loader import (
+    PAN_INDIA_DRAINAGE_LINES_PATH,
+    LOCAL_DRAINAGE_LINES_OUTPUT,
 )
-LOCAL_OUTPUT_BASE_DIR = (
-    PROJECT_ROOT / "data/layers/drainage_lines/drainage_lines_local"
-)
+
 GEOSERVER_WORKSPACE = "drainage"
 
 
@@ -67,16 +66,17 @@ def clip_drainage_lines(
     roi_path=None,
     app_type="MWS",
     proj_id=None,
+    drainage_lines_path=PAN_INDIA_DRAINAGE_LINES_PATH,
     precomputed_roi_dir=None,
     push_to_geoserver=True,
     sync_layer_metadata=True,
 ):
     """
-    Orchestrates the local drainage lines vector generation.
+    Celery task for local drainage lines vector generation.
     """
 
     if state and district and block:
-        layer_name = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_25may"
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_drainage_lines_27may"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -94,12 +94,12 @@ def clip_drainage_lines(
         )
         print(f"ROI source: {roi_path}")
 
-    if not os.path.exists(DRAINAGE_LINES_PATH):
-        raise FileNotFoundError(f"PAN INDIA drainage lines file not found at {DRAINAGE_LINES_PATH}")
+    if not os.path.exists(drainage_lines_path):
+        raise FileNotFoundError(f"PAN INDIA drainage lines file not found at {drainage_lines_path}")
 
     bounds = watersheds_gdf.geometry.total_bounds
     bbox_geom = box(*bounds)
-    drainage_gdf = gpd.read_file(DRAINAGE_LINES_PATH, bbox=bbox_geom)
+    drainage_gdf = gpd.read_file(drainage_lines_path, bbox=bbox_geom)
 
     result_gdf = _compute_drainage_lines_for_watersheds(
         watersheds_gdf=watersheds_gdf,
@@ -111,7 +111,7 @@ def clip_drainage_lines(
         state=state,
         district=district,
         block=block,
-        output_base_dir=LOCAL_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_DRAINAGE_LINES_OUTPUT,
     )
 
     asset_id = write_vector_output(

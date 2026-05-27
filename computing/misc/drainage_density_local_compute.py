@@ -40,10 +40,6 @@ INFLUENCE_FACTORS = [
 
 
 def _load_drainage_lines_for_roi(watersheds_gdf):
-    """
-    Loads only drainage line features overlapping the study area bbox.
-    GPKG spatial index ensures only relevant tiles are read.
-    """
     bounds = watersheds_gdf.geometry.total_bounds
     bbox_geom = box(*bounds)
 
@@ -190,6 +186,6 @@ def drainage_density(
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
-            print(f"Data updated for layer_id: {layer_id}")
+            print(f"Sync Data for layer_id: {layer_id}")
 
     return True
