@@ -15,8 +15,8 @@ from computing.local_compute_helper import (
     read_validated_vector_file,
     write_vector_output,
 )
+from computing.config_loader import LOCAL_MWS_CENTROID_OUTPUT
 
-MWS_CENTROID_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/layers/mws_centroid"
 GEOSERVER_WORKSPACE = "mws_centroid"
 
 
@@ -59,7 +59,7 @@ def generate_mws_centroid_data_local(
 ):
     _ = self, gee_account_id
     if state and district and block:
-        layer_name = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_mws_centroid"
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_mws_centroid"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -70,7 +70,7 @@ def generate_mws_centroid_data_local(
     else:
         if not roi_path or not asset_suffix:
             raise ValueError("ROI path and asset_suffix are required for custom runs.")
-        layer_name = f"{asset_suffix}_mws_centroid".lower()
+        layer_name = f"{valid_gee_text(asset_suffix).lower()}_mws_centroid"
         watersheds_gdf = read_validated_vector_file(roi_path, f"Invalid ROI file: {roi_path}")
         print(f"ROI source: {roi_path}")
 
@@ -83,7 +83,7 @@ def generate_mws_centroid_data_local(
         state=state,
         district=district,
         block=block,
-        output_base_dir=MWS_CENTROID_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_MWS_CENTROID_OUTPUT,
     )
 
     asset_id = write_vector_output(
@@ -114,6 +114,7 @@ def generate_mws_centroid_data_local(
             layer_name=layer_name,
             asset_id=asset_id,
             dataset_name="Mws Centroid",
+            misc={"is_generated_locally": True},
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)

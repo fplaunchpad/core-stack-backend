@@ -14,11 +14,11 @@ from computing.local_compute_helper import (
     push_local_raster_to_geoserver,
 )
 from computing.STAC_specs import generate_STAC_layerwise
-
-CATCHMENT_AREA_PAN_INDIA_LOCAL_PATH = (
-    PROJECT_ROOT / "data/base_layers/Pan_India_catchment_area.tif"
+from computing.config_loader import (
+    PAN_INDIA_CATCHMENT_AREA_PATH,
+    LOCAL_CATCHMENT_AREA_OUTPUT,
 )
-CATCHMENT_AREA_OUTPUT_BASE_DIR = PROJECT_ROOT / "data/layers/catchment_area_singleflow"
+
 GEOSERVER_WORKSPACE = "catchment_area_singleflow"
 CATCHMENT_AREA_STYLE_NAME = "catchment_area_singleflow"
 
@@ -38,10 +38,8 @@ def generate_catchment_area_singleflow_local(
     push_to_geoserver=True,
     sync_layer_metadata=True,
 ):
-    _ = self, gee_account_id, proj_id, asset_folder, app_type
-    
     if state and district and block:
-        layer_name_base = f"catchment_area_{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}"
+        layer_name_base = f"catchment_area_{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -57,10 +55,10 @@ def generate_catchment_area_singleflow_local(
         print(f"ROI source: {roi_path}")
 
     # Raster Processing
-    raster_layer_name = f"{layer_name_base}_raster"
+    raster_layer_name = f"{layer_name_base}"
     output_raster_path = build_output_raster_path(
         layer_name=raster_layer_name,
-        output_base_dir=CATCHMENT_AREA_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_CATCHMENT_AREA_OUTPUT,
         state=state,
         district=district,
         block=block,
@@ -69,7 +67,7 @@ def generate_catchment_area_singleflow_local(
     print("Clipping Catchment Area raster...")
     clipped_raster_path = clip_raster_with_roi(
         roi_gdf=watersheds_gdf,
-        raster_path=CATCHMENT_AREA_PAN_INDIA_LOCAL_PATH,
+        raster_path=PAN_INDIA_CATCHMENT_AREA_PATH,
         output_path=output_raster_path,
         raster_label="Catchment Area Raster",
     )
@@ -94,6 +92,7 @@ def generate_catchment_area_singleflow_local(
             layer_name=raster_layer_name,
             asset_id=str(clipped_raster_path),
             dataset_name="Catchment Area",
+            misc={"is_generated_locally": True},
         )
         if raster_layer_id:
             update_layer_sync_status(layer_id=raster_layer_id, sync_to_geoserver=True)

@@ -41,7 +41,18 @@ LOCAL_DISTANCETONEARESTDRAINAGE_OUTPUT = PROJECT_ROOT / "data/layers/distance_ne
 
 PAN_INDIA_FACILITIES_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_facilities_polygon.geojson"
 LOCAL_FACILITIES_OUTPUT = PROJECT_ROOT / "data/layers/facilities"
+PAN_INDIA_CATCHMENT_AREA_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_catchment_area.tif"
+LOCAL_CATCHMENT_AREA_OUTPUT = PROJECT_ROOT / "data/layers/catchment_area_singleflow"
 
+PAN_INDIA_SLOPE_PERCENTAGE_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_slope_percentage.tif"
+LOCAL_SLOPE_PERCENTAGE_OUTPUT = PROJECT_ROOT / "data/layers/slope_percentage"
+
+PAN_INDIA_MWS_CONNECTIVITY_PATH = PROJECT_ROOT / "data/layers/mws_connectivity/Pan_India_mws_connectivity.geojson"
+LOCAL_MWS_CONNECTIVITY_OUTPUT = PROJECT_ROOT / "data/layers/mws_connectivity/mws_connectivity_local"
+
+LOCAL_MWS_CENTROID_OUTPUT = PROJECT_ROOT / "data/layers/mws_centroid"
+
+NREGA_LOCAL_OUTPUT = PROJECT_ROOT / "data/layers/nrega_assets"
 PAN_INDIA_RESTORATION_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_WRI_Restoration.tif"
 LOCAL_RESTORATION_OUTPUT = PROJECT_ROOT / "data/layers/restoration_opportunity"
 

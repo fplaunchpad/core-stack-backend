@@ -15,6 +15,10 @@ from computing.local_compute_helper import (
     validate_geometry,
     write_vector_output,
 )
+from computing.config_loader import (
+    PAN_INDIA_MWS_CONNECTIVITY_PATH,
+    LOCAL_MWS_CONNECTIVITY_OUTPUT,
+)
 from computing.utils import (
     push_shape_to_geoserver,
     save_layer_info_to_db,
@@ -22,29 +26,17 @@ from computing.utils import (
     fix_invalid_geometry_in_gdf,
 )
 
-MWS_CONNECTIVITY_PATH = (
-    PROJECT_ROOT / "data/layers/mws_connectivity/Pan_India_mws_connectivity.geojson"
-)
-LOCAL_OUTPUT_BASE_DIR = (
-    PROJECT_ROOT / "data/layers/mws_connectivity/mws_connectivity_local"
-)
 GEOSERVER_WORKSPACE = "mws_connectivity"
 
 from shapely.ops import unary_union
 
 
 def _compute_mws_connectivity_for_watersheds(watersheds_gdf, mws_gdf):
-
-    watersheds_gdf = validate_geometry(watersheds_gdf).reset_index(drop=True)
-    mws_gdf = validate_geometry(mws_gdf).reset_index(drop=True)
-    outer_boundary = watersheds_gdf.geometry.unary_union
-
-    # Step 1: Filter MWS features that intersect the ROI
-    mws_in_roi = mws_gdf[mws_gdf.intersects(outer_boundary)].copy()
+    mws_in_roi = mws_gdf.copy()
 
     if mws_in_roi.empty:
         print("No MWS connectivity found within the outer boundary.")
-        return gpd.GeoDataFrame(columns=mws_gdf.columns, crs=mws_gdf.crs)
+        return mws_in_roi
 
     print(f"MWS connectivity within outer boundary: {len(mws_in_roi)}")
 
@@ -84,10 +76,8 @@ def mws_connectivity_vector(
     sync_layer_metadata=True,
 ):
     """
-    Orchestrates the local MWS connectivity vector generation.
-    """
     if state and district and block:
-        layer_name = f"{valid_gee_text(str(district).strip().lower())}_{valid_gee_text(str(block).strip().lower())}_mws_connectivity_25may"
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_mws_connectivity"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -107,13 +97,13 @@ def mws_connectivity_vector(
         )
         print(f"ROI source: {roi}")
 
-    if not os.path.exists(MWS_CONNECTIVITY_PATH):
+    if not os.path.exists(PAN_INDIA_MWS_CONNECTIVITY_PATH):
         raise FileNotFoundError(f"PAN INDIA MWS connectivity file not found")
 
-    mws_gdf = read_validated_vector_file(
-        MWS_CONNECTIVITY_PATH,
-        f"PAN INDIA MWS connectivity file has no valid geometries",
-    )
+    mws_gdf = gpd.read_file(PAN_INDIA_MWS_CONNECTIVITY_PATH, mask=watersheds_gdf)
+    mws_gdf = validate_geometry(mws_gdf)
+    if mws_gdf.empty:
+        print("Warning: PAN INDIA MWS connectivity file has no valid geometries overlapping ROI")
 
     result_gdf = _compute_mws_connectivity_for_watersheds(
         watersheds_gdf=watersheds_gdf,
@@ -125,7 +115,7 @@ def mws_connectivity_vector(
         state=state,
         district=district,
         block=block,
-        output_base_dir=LOCAL_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_MWS_CONNECTIVITY_OUTPUT,
     )
 
     asset_id = write_vector_output(
@@ -152,6 +142,7 @@ def mws_connectivity_vector(
             layer_name=layer_name,
             asset_id=asset_id,
             dataset_name="Mws Connectivity",
+            misc={"is_generated_locally": True},
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)

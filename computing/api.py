@@ -153,6 +153,7 @@ from .misc.drainage_density_local_compute import (
 )
 from .misc.restoration_opportunity_local_compute import generate_restoration_opportunity_local as generate_restoration_opportunity_local_task
 from .misc.soge_vector_local_compute import generate_soge_vector_local as generate_soge_vector_local_task
+from .misc.nrega_local_compute import generate_nrega_data_local as generate_nrega_data_local_task
 
 
 @api_security_check(allowed_methods="POST")
@@ -184,8 +185,20 @@ def generate_nrega_layer(request):
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
         gee_account_id = request.data.get("gee_account_id")
-        clip_nrega_district_block.apply_async(
-            args=[state, district, block, gee_account_id], queue="nrm"
+        compute = _get_compute_mode(request)
+        task = _select_compute_task(
+            compute,
+            clip_nrega_district_block,
+            generate_nrega_data_local_task,
+        )
+        task.apply_async(
+            kwargs={
+                "state": state,
+                "district": district,
+                "block": block,
+                "gee_account_id": gee_account_id,
+            },
+            queue="nrm1"
         )
         return Response(
             {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
@@ -1675,7 +1688,7 @@ def generate_catchment_area_SF(request):
             generate_catchment_area_singleflow_local_task,
         )
         task.apply_async(
-            args=[state, district, block, gee_account_id], queue="nrm"
+            args=[state, district, block, gee_account_id], queue="nrm1"
         )
         return Response(
             {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
@@ -1701,7 +1714,7 @@ def generate_slope_percentage(request):
             generate_slope_percentage_data_local_task,
         )
         task.apply_async(
-            args=[state, district, block, gee_account_id], queue="nrm"
+            args=[state, district, block, gee_account_id], queue="nrm1"
         )
         return Response(
             {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
@@ -1822,7 +1835,7 @@ def generate_mws_centroid(request):
             generate_mws_centroid_data_local_task,
         )
         task.apply_async(
-            args=[state, district, block, gee_account_id], queue="nrm"
+            args=[state, district, block, gee_account_id], queue="nrm1"
         )
         return Response(
             {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
