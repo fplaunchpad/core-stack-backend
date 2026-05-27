@@ -1480,7 +1480,7 @@ def generate_lcw(request):
             generate_lcw_conflict_data_local_task,
         )
         task.apply_async(
-            args=[state, district, block, gee_account_id], queue="nrm"
+            args=[state, district, block, gee_account_id], queue="nrm1"
         )
         return Response(
             {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
@@ -1506,7 +1506,7 @@ def generate_agroecological(request):
             generate_agroecological_data_local_task,
         )
         task.apply_async(
-            args=[state, district, block, gee_account_id], queue="nrm"
+            args=[state, district, block, gee_account_id], queue="nrm1"
         )
         return Response(
             {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
