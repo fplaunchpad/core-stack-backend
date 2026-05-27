@@ -15,6 +15,9 @@ LOCAL_DRAINAGE_DENSITY_OUTPUT = PROJECT_ROOT / "data/drainage_density"
 PAN_INDIA_CANAL_PATH = PROJECT_ROOT / "data/canal/Canal_pan_india.geojson"
 LOCAL_CANAL_OUTPUT = PROJECT_ROOT / "data/canal/canal_local"
 
+PAN_INDIA_RESTORATION_PATH = PROJECT_ROOT / "data/base_layers/Pan_India_WRI_Restoration.tif"
+LOCAL_RESTORATION_OUTPUT = PROJECT_ROOT / "data/layers/restoration_opportunity"
+
 PAN_INDIA_RIVER_PATH = PROJECT_ROOT / "data/river/River_pan_india.geojson"
 LOCAL_RIVER_OUTPUT = PROJECT_ROOT / "data/river/river_local"
 

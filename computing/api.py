@@ -1109,7 +1109,7 @@ def restoration_opportunity(request):
             generate_restoration_opportunity_local_task,
         )
         task.apply_async(
-            args=[state, district, block, gee_account_id], queue="nrm"
+            args=[state, district, block, gee_account_id], queue="nrm1"
         )
         return Response(
             {"Success": "restoration_opportunity task initiated"},

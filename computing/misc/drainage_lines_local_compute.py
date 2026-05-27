@@ -76,7 +76,7 @@ def clip_drainage_lines(
     """
 
     if state and district and block:
-        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_drainage_lines_27may"
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
