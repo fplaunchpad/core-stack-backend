@@ -90,7 +90,7 @@ def generate_lcw_conflict_data_local(
     lcw_gdf = gpd.read_file(PAN_INDIA_LCW_PATH, mask=watersheds_gdf)
     lcw_gdf = validate_geometry(lcw_gdf)
     if lcw_gdf.empty:
-        raise ValueError("PAN INDIA LCW conflict file has no valid geometries overlapping ROI")
+        print("Warning: PAN INDIA LCW conflict file has no valid geometries overlapping ROI")
     print(f"Loaded {len(lcw_gdf)} LCW features")
 
     result_gdf = _compute_lcw_conflict_for_watersheds(
