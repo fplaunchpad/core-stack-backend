@@ -31,27 +31,19 @@ try:
 except Exception:
     pass
 
-LOCAL_OUTPUT_BASE_DIR = str(PROJECT_ROOT / "data/fabdem/fabdem_local")
-TERRAIN_RASTER_PATH = str(PROJECT_ROOT / "data/fabdem/fabdem_pan_india.tif")
+from computing.config_loader import (
+    PAN_INDIA_FABDEM_PATH,
+    LOCAL_FABDEM_OUTPUT,
+)
+
 GEOSERVER_STYLE = None
 GEOSERVER_WORKSPACE = "dem"
-ZERO_NODATA = -9999  # FABDEM nodata — 0 is valid elevation (sea level)
-
-
-# ---------------------------------------------------------------------------
-# Internal clip helper — reprojects ROI to raster CRS using correct PROJ
-# ---------------------------------------------------------------------------
-
+ZERO_NODATA = -9999
 
 def _clip_fabdem_with_roi(roi_gdf, output_path):
-    """
-    Clips pan-India FABDEM raster to ROI.
-    Reprojects ROI to match raster CRS (EPSG:3857) using pyproj's own data dir,
-    bypassing the broken system PROJ installation.
-    """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    with rasterio.open(TERRAIN_RASTER_PATH) as src:
+    with rasterio.open(PAN_INDIA_FABDEM_PATH) as src:
         raster_crs = src.crs
 
         # Reproject ROI to raster CRS — use pyproj data dir to avoid broken PROJ
@@ -92,11 +84,6 @@ def _clip_fabdem_with_roi(roi_gdf, output_path):
     return str(output_path)
 
 
-# ---------------------------------------------------------------------------
-# Stage 1 — Raster
-# ---------------------------------------------------------------------------
-
-
 def run_raster_fabdem_local(
     state=None,
     district=None,
@@ -108,10 +95,7 @@ def run_raster_fabdem_local(
     sync_layer_metadata=False,
 ):
     if state and district and block:
-        layer_name = (
-            f"{valid_gee_text(str(district).strip().lower())}_"
-            f"{valid_gee_text(str(block).strip().lower())}_dem_raster"
-        )
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_dem_raster"
         roi_gdf = load_precomputed_roi(
             state=state,
             district=district,
@@ -131,7 +115,7 @@ def run_raster_fabdem_local(
 
     output_raster_path = build_output_raster_path(
         layer_name=layer_name,
-        output_base_dir=LOCAL_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_FABDEM_OUTPUT,
         state=state,
         district=district,
         block=block,
@@ -144,18 +128,16 @@ def run_raster_fabdem_local(
 
     if push_to_geoserver:
         try:
-            from utilities.geoserver_utils import Geoserver
-
-            # Step 1 — Pre-delete stale store from any workspace it may exist in
-            geo = Geoserver()
-            for ws in ("ne", GEOSERVER_WORKSPACE):
-                try:
-                    geo.delete_raster_store(layer_name, workspace=ws)
-                    print(
-                        f"Deleted stale raster store '{layer_name}' from workspace '{ws}'"
-                    )
-                except Exception:
-                    pass
+            # from utilities.geoserver_utils import Geoserver
+            # geo = Geoserver()
+            # for ws in ("ne", GEOSERVER_WORKSPACE):
+            #     try:
+            #         geo.delete_raster_store(layer_name, workspace=ws)
+            #         print(
+            #             f"Deleted stale raster store '{layer_name}' from workspace '{ws}'"
+            #         )
+            #     except Exception:
+            #         pass
 
             # Step 2 — Upload raster → creates coveragestore
             upload_res, style_res = push_local_raster_to_geoserver(
@@ -207,6 +189,7 @@ def run_raster_fabdem_local(
             dataset_name="DEM Raster",
             algorithm="FABDEM",
             algorithm_version="1.0",
+            misc={"is_generated_locally": True},
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
@@ -215,24 +198,7 @@ def run_raster_fabdem_local(
     return True, clipped_raster_path
 
 
-# ---------------------------------------------------------------------------
-# Stage 2 helpers — per-watershed DEM stats
-# ---------------------------------------------------------------------------
-
-
 def _compute_watershed_dem_stats(watersheds_gdf, raster_path):
-    """
-    GEE equivalent: vectorize_fabdem() reduceRegions(min/max/mean + pixelArea sum)
-
-    GEE                                     Local
-    ──────────────────────────────────────  ──────────────────────────────────────
-    ee.Image.pixelArea()                    pixel_width × pixel_height / 10_000
-    Reducer.min/max/mean/sum per polygon    rasterstats.zonal_stats(min/max/mean/count)
-    count × pixel_area_ha                → area_in_ha
-
-    Output columns mirror GEE's .select():
-        uid, area_in_ha, min_elevation, max_elevation, mean_elevation
-    """
     from rasterstats import zonal_stats
 
     with rasterio.open(raster_path) as src:
@@ -269,11 +235,6 @@ def _compute_watershed_dem_stats(watersheds_gdf, raster_path):
     return result_gdf[[c for c in keep_cols if c in result_gdf.columns]]
 
 
-# ---------------------------------------------------------------------------
-# Stage 2 — Vector  (= vectorize_fabdem() on GEE)
-# ---------------------------------------------------------------------------
-
-
 def run_vector_fabdem_local(
     state=None,
     district=None,
@@ -284,26 +245,13 @@ def run_vector_fabdem_local(
     push_to_geoserver=True,
     sync_layer_metadata=False,
 ):
-    """
-    GEE equivalent: vectorize_fabdem()
-
-    GEE flow:                               Local flow:
-    ──────────────────────────────────────  ──────────────────────────────────────
-    ee.Image(asset_id).select("elevation")  raster_path from Stage 1
-    reduceRegions(min/max/mean/pixelArea) →  rasterstats.zonal_stats()
-    export_vector_asset_to_gee()          →  write_vector_output() → .gpkg
-    sync_layer_to_geoserver() (GeoJSON)   →  push_shape_to_geoserver() (.gpkg)
-    """
     if not raster_path:
         raise ValueError(
             "`raster_path` is required for vector stage — pass Stage 1 output."
         )
 
     if state and district and block:
-        layer_name = (
-            f"{valid_gee_text(str(district).strip().lower())}_"
-            f"{valid_gee_text(str(block).strip().lower())}_dem_vector"
-        )
+        layer_name = f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_dem_vector"
         watersheds_gdf, watershed_source = load_precomputed_watersheds(
             state=state,
             district=district,
@@ -330,7 +278,7 @@ def run_vector_fabdem_local(
 
     output_path = build_output_vector_path(
         layer_name=layer_name,
-        output_base_dir=LOCAL_OUTPUT_BASE_DIR,
+        output_base_dir=LOCAL_FABDEM_OUTPUT,
         state=state,
         district=district,
         block=block,
@@ -369,96 +317,13 @@ def run_vector_fabdem_local(
             layer_name=layer_name,
             asset_id=asset_id,
             dataset_name="DEM Vector",
+            misc={"is_generated_locally": True},
         )
         if layer_id:
             update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
             print("Sync to GeoServer flag updated for DEM vector")
 
     return True
-
-
-# ---------------------------------------------------------------------------
-# Orchestrator — runs Stage 1 then Stage 2
-# ---------------------------------------------------------------------------
-
-
-def run_fabdem_local(
-    state=None,
-    district=None,
-    block=None,
-    asset_suffix=None,
-    roi=None,
-    precomputed_roi_dir=None,
-    push_to_geoserver=True,
-    sync_layer_metadata=False,
-):
-    """
-    Full local FABDEM pipeline.
-    Stage 1: Clip pan-India raster → GeoTIFF → GeoServer
-    Stage 2: Zonal stats per watershed → GeoPackage → GeoServer
-    """
-    raster_ok, clipped_raster_path = run_raster_fabdem_local(
-        state=state,
-        district=district,
-        block=block,
-        asset_suffix=asset_suffix,
-        roi=roi,
-        precomputed_roi_dir=precomputed_roi_dir,
-        push_to_geoserver=push_to_geoserver,
-        sync_layer_metadata=sync_layer_metadata,
-    )
-
-    if not raster_ok or not clipped_raster_path:
-        print("Raster stage failed — skipping vector stage.")
-        return False
-
-    vector_ok = run_vector_fabdem_local(
-        state=state,
-        district=district,
-        block=block,
-        asset_suffix=asset_suffix,
-        raster_path=clipped_raster_path,
-        precomputed_roi_dir=precomputed_roi_dir,
-        push_to_geoserver=push_to_geoserver,
-        sync_layer_metadata=sync_layer_metadata,
-    )
-
-    return raster_ok and vector_ok
-
-
-# ---------------------------------------------------------------------------
-# Internal task wrapper
-# ---------------------------------------------------------------------------
-
-
-def _generate_febdem_raster_clip_task(
-    state=None,
-    district=None,
-    block=None,
-    gee_account_id=None,
-    asset_suffix=None,
-    asset_folder=None,
-    proj_id=None,
-    roi=None,
-    precomputed_roi_dir=None,
-    app_type="MWS",
-):
-    _ = gee_account_id, asset_folder, proj_id, app_type
-    return run_fabdem_local(
-        state=state,
-        district=district,
-        block=block,
-        asset_suffix=asset_suffix,
-        roi=roi,
-        precomputed_roi_dir=precomputed_roi_dir,
-        push_to_geoserver=True,
-        sync_layer_metadata=True,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Celery task — same signature as before, now runs both stages
-# ---------------------------------------------------------------------------
 
 
 @app.task(bind=True)
@@ -475,16 +340,30 @@ def generate_febdem_raster_clip(
     precomputed_roi_dir=None,
     app_type="MWS",
 ):
-    _ = self
-    return _generate_febdem_raster_clip_task(
+    raster_ok, clipped_raster_path = run_raster_fabdem_local(
         state=state,
         district=district,
         block=block,
-        gee_account_id=gee_account_id,
         asset_suffix=asset_suffix,
-        asset_folder=asset_folder,
-        proj_id=proj_id,
         roi=roi,
         precomputed_roi_dir=precomputed_roi_dir,
-        app_type=app_type,
+        push_to_geoserver=True,
+        sync_layer_metadata=True,
     )
+
+    if not raster_ok or not clipped_raster_path:
+        print("Raster stage failed — skipping vector stage.")
+        return False
+
+    vector_ok = run_vector_fabdem_local(
+        state=state,
+        district=district,
+        block=block,
+        asset_suffix=asset_suffix,
+        raster_path=clipped_raster_path,
+        precomputed_roi_dir=precomputed_roi_dir,
+        push_to_geoserver=True,
+        sync_layer_metadata=True,
+    )
+
+    return raster_ok and vector_ok

@@ -14,3 +14,6 @@ LOCAL_CANAL_OUTPUT = PROJECT_ROOT / "data/canal/canal_local"
 
 PAN_INDIA_RIVER_PATH = PROJECT_ROOT / "data/river/River_pan_india.geojson"
 LOCAL_RIVER_OUTPUT = PROJECT_ROOT / "data/river/river_local"
+
+PAN_INDIA_FABDEM_PATH = str(PROJECT_ROOT / "data/fabdem/fabdem_pan_india.tif")
+LOCAL_FABDEM_OUTPUT = str(PROJECT_ROOT / "data/fabdem/fabdem_local")
