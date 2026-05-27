@@ -319,15 +319,15 @@ def generate_febdem_raster_clip(
         print("Raster stage failed — skipping vector stage.")
         return False
 
-    vector_ok = run_vector_fabdem_local(
-        state=state,
-        district=district,
-        block=block,
-        asset_suffix=asset_suffix,
-        raster_path=clipped_raster_path,
-        precomputed_roi_dir=precomputed_roi_dir,
-        push_to_geoserver=True,
-        sync_layer_metadata=True,
-    )
+    # vector_ok = run_vector_fabdem_local(
+    #     state=state,
+    #     district=district,
+    #     block=block,
+    #     asset_suffix=asset_suffix,
+    #     raster_path=clipped_raster_path,
+    #     precomputed_roi_dir=precomputed_roi_dir,
+    #     push_to_geoserver=True,
+    #     sync_layer_metadata=True,
+    # )
 
-    return raster_ok and vector_ok
+    return raster_ok # and vector_ok
