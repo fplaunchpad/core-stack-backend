@@ -88,7 +88,8 @@ import tempfile
 import os
 from .generate_yuktdhara_format import csv_to_kml, fetch_data
 import zipfile
-from django.http import FileResponse
+from geoadmin.models import GramPanchayat
+from plans.models import PlanApp
 
 state_param = openapi.Parameter(
     "state",
@@ -406,38 +407,38 @@ def generate_resource_report(request):
 @schema(None)
 @auth_free
 def download_report(request):
-    report_type = request.GET.get('report_type')
-    
+    report_type = request.GET.get("report_type")
+
     if not report_type:
         return HttpResponseBadRequest("Missing 'report_type' parameter")
-    
+
     # Define required params based on report type
-    if report_type == 'mws':
+    if report_type == "mws":
         required = ("state", "district", "block", "uid", "report_type")
-    elif report_type == 'resource':
+    elif report_type == "resource":
         required = ("district", "block", "plan_id", "plan_name", "report_type")
     else:
         return HttpResponseBadRequest(f"Unknown report_type: {report_type}")
-    
+
     missing = [k for k in required if k not in request.GET]
     if missing:
         return HttpResponseBadRequest(f"Missing query params: {', '.join(missing)}")
-    
-    if report_type == 'mws':
+
+    if report_type == "mws":
         report_html_url = (
             f"https://geoserver.core-stack.org/api/v1/generate_mws_report/"
             f"?state={request.GET.get('state')}&district={request.GET.get('district')}&block={request.GET.get('block')}&uid={request.GET.get('uid')}"
         )
         filename = f"mws_report_{request.GET.get('uid')}.pdf"
-    elif report_type == 'resource':
+    elif report_type == "resource":
         report_html_url = (
             f"https://geoserver.core-stack.org/api/v1/generate_resource_report/"
             f"?district={request.GET.get('district')}&block={request.GET.get('block')}&plan_id={request.GET.get('plan_id')}&plan_name={request.GET.get('plan_name')}"
         )
         filename = f"resource_report_{request.GET.get('plan_name')}.pdf"
-    
+
     pdf_bytes = render_pdf_with_firefox(report_html_url)
-    
+
     resp = HttpResponse(pdf_bytes, content_type="application/pdf")
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
     return resp
@@ -558,6 +559,33 @@ def generate_tehsil_report(request):
         logger.exception("Exception in generate_tehsil_report api :: ", e)
         return render(request, "error-page.html", {})
 
+
+@api_view(["GET"])
+@auth_free
+@schema(None)
+@api_security_check(auth_type="Auth_free")
+def generate_village_report(request):
+    try:
+        # ? district, block, villageId
+        params = request.GET
+        result = {}
+
+        for key, value in params.items():
+            result[key] = value
+        
+        context = {
+            "state": result["state"],
+            "district": result["district"],
+            "block": result["block"],
+            "village_id" : result["villageId"],
+            "development_scores": json.dumps([0.85, 0.72, 0.65, 0.78, 0.82, 0.75, 0.68, 0.80, 0.75, 0.70])  # Serialize to JSON string
+        }
+
+        return render(request, "village-report.html", context)
+
+    except Exception as e:
+        logger.exception("Exception in generate_village_report api :: ", e)
+        return render(request, "error-page.html", {})
 
 # ---------------------------------------------------------------------------
 # DPR Data API
@@ -847,31 +875,87 @@ def dpr_update_demand_status(request, plan_id):
 @api_security_check(auth_type="JWT_or_API_key", allowed_methods=["GET"])
 @schema(None)
 def export_yuktdhara(request):
+    gp_id = request.query_params.get("gp_id")
 
-    plan_id = request.query_params.get("plan_id")
+    if not gp_id:
+        return Response(
+            {
+                "success": False,
+                "message": "gp_id is required",
+            },
+            status=400,
+        )
+
+    try:
+        gp = GramPanchayat.objects.get(gram_panchayat_code=gp_id)
+
+    except GramPanchayat.DoesNotExist:
+        return Response(
+            {
+                "success": False,
+                "message": "Gram Panchayat not found",
+            },
+            status=404,
+        )
+
+    plans_exists = PlanApp.objects.filter(
+        gp_id=gp_id,
+        enabled=True,
+    ).exists()
+
+    if not plans_exists:
+        return Response(
+            {
+                "success": False,
+                "message": "No plans mapped with this Gram Panchayat",
+            },
+            status=404,
+        )
+
+    gp_name = gp.gram_panchayat_name
 
     with tempfile.TemporaryDirectory() as temp_dir:
 
-        csv_path = os.path.join(temp_dir, f"Yuktdhara_{plan_id}.csv")
+        csv_path = os.path.join(
+            temp_dir,
+            f"Yuktdhara_{gp_name}.csv",
+        )
 
-        kml_path = os.path.join(temp_dir, f"Yuktdhara_{plan_id}.kml")
+        kml_path = os.path.join(
+            temp_dir,
+            f"Yuktdhara_{gp_name}.kml",
+        )
 
-        zip_path = os.path.join(temp_dir, f"Yuktdhara_{plan_id}.zip")
+        zip_path = os.path.join(
+            temp_dir,
+            f"Yuktdhara_{gp_name}.zip",
+        )
 
-        fetch_data(plan_id, csv_path)
+        fetch_data(gp_id, csv_path)
 
         csv_to_kml(csv_path, kml_path)
 
         with zipfile.ZipFile(zip_path, "w") as zipf:
 
-            zipf.write(csv_path, arcname=os.path.basename(csv_path))
+            zipf.write(
+                csv_path,
+                arcname=os.path.basename(csv_path),
+            )
 
-            zipf.write(kml_path, arcname=os.path.basename(kml_path))
+            zipf.write(
+                kml_path,
+                arcname=os.path.basename(kml_path),
+            )
 
         with open(zip_path, "rb") as f:
-            response = HttpResponse(f.read(), content_type="application/zip")
+
+            response = HttpResponse(
+                f.read(),
+                content_type="application/zip",
+            )
+
             response["Content-Disposition"] = (
-                f"attachment; " f'filename="Yuktdhara_{plan_id}.zip"'
+                f'attachment; filename="Yuktdhara_{gp_name}.zip"'
             )
 
             return response

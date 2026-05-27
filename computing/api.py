@@ -85,6 +85,7 @@ from .zoi_layers.zoi import generate_zoi
 from .mws.mws_connectivity import generate_mws_connectivity_data
 from .mws.mws_centroid import generate_mws_centroid_data
 from .misc.facilities_proximity import generate_facilities_proximity_task
+from .misc.antyodaya import generate_antyodaya_layer_task
 from .misc.digital_elevation_model import generate_dem_layer
 from .misc.canal_layer import canal_vector
 from .STAC_specs.stac_collection import generate_stac_collection_task
@@ -1824,6 +1825,28 @@ def generate_facilities_proximity(request):
         )
     except Exception as e:
         return layer_api_error_response("generate_facilities_proximity", e, request=request)
+
+
+@api_view(["POST"])
+@schema(None)
+def generate_antyodaya(request):
+    print("Inside generate_antyodaya API.")
+    try:
+        state = request.data.get("state").lower()
+        district = request.data.get("district").lower()
+        block = request.data.get("block").lower()
+        sync_to_geoserver = request.data.get("sync_to_geoserver", True)
+        overwrite = request.data.get("overwrite", False)
+        generate_antyodaya_layer_task.apply_async(
+            args=[state, district, block, sync_to_geoserver, overwrite],
+            queue="nrm",
+        )
+        return Response(
+            {"Success": "Successfully initiated"}, status=status.HTTP_200_OK
+        )
+    except Exception as e:
+        print("Exception in generate_antyodaya api :: ", e)
+        return Response({"Exception": e}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(["POST"])

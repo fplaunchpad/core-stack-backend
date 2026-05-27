@@ -1,41 +1,32 @@
 # import
-import os
-
-from nrm_app.settings import (
-    DATA_DIR,
-    GCS_BUCKET_NAME,
-    GEE_STORAGE_PROJECT,
-    GEE_STORAGE_PROJECT_HELPER,
-)
-
-
-def _data_path(*parts):
-    return os.path.join(DATA_DIR, *parts)
+from nrm_app.settings import GEE_STORAGE_PROJECT, GEE_STORAGE_PROJECT_HELPER
 
 # Directory Path
-ADMIN_BOUNDARY_INPUT_DIR = _data_path("admin-boundary", "input")
-ADMIN_BOUNDARY_OUTPUT_DIR = _data_path("admin-boundary", "output")
+ADMIN_BOUNDARY_INPUT_DIR = "data/admin-boundary/input"
+ADMIN_BOUNDARY_OUTPUT_DIR = "data/admin-boundary/output"
 
-NREGA_ASSETS_INPUT_DIR = _data_path("nrega_assets", "input")
-NREGA_ASSETS_OUTPUT_DIR = _data_path("nrega_assets", "output")
+NREGA_ASSETS_INPUT_DIR = "data/nrega_assets/input"
+NREGA_ASSETS_OUTPUT_DIR = "data/nrega_assets/output"
 
-MERGE_MWS_PATH = _data_path("merge_mws")
+ANTYODAYA_2020 = "data/antyodaya/output/pan_india_antyodaya_2020.gpkg"
 
-RASTERS_PATH = _data_path("rasters")
-CROP_GRID_PATH = _data_path("crop_grid")
+MERGE_MWS_PATH = "data/merge_mws"
 
-KML_PATH = os.path.join(_data_path("kml"), "")
-SHAPEFILE_DIR = _data_path("kml", "shapefiles")
+RASTERS_PATH = "data/rasters"
+CROP_GRID_PATH = "data/crop_grid"
 
-DRAINAGE_LINES_SHAPEFILES = _data_path("drainage_lines", "input")
-BASIN_BOUNDARIES = _data_path("drainage_lines", "input", "basin_boundaries")
-DRAINAGE_LINES_OUTPUT = _data_path("drainage_lines", "output")
-DRAINAGE_DENSITY_OUTPUT = _data_path("drainage_density")
+KML_PATH = "data/kml/"
+SHAPEFILE_DIR = "data/kml/shapefiles"
 
-LITHOLOGY_PATH = os.path.join(_data_path("lithology"), "")
-SITE_DATA_PATH = _data_path("site_data")
+DRAINAGE_LINES_SHAPEFILES = "data/drainage_lines/input"
+BASIN_BOUNDARIES = "data/drainage_lines/input/basin_boundaries"
+DRAINAGE_LINES_OUTPUT = "data/drainage_lines/output"
+DRAINAGE_DENSITY_OUTPUT = "data/drainage_density"
 
-WHATSAPP_MEDIA_PATH = os.path.join(_data_path("whatsapp_media"), "")
+LITHOLOGY_PATH = "data/lithology/"
+SITE_DATA_PATH = "data/site_data"
+
+WHATSAPP_MEDIA_PATH = "data/whatsapp_media/"
 
 
 # MARK: ODK URLs
@@ -174,6 +165,8 @@ ODK_SYNC_URL_AGRI_FEEDBACK = (
 )
 
 # MARK: GEE Paths
+GCS_BUCKET_NAME = "core_stack"
+
 GEE_LITHOLOGY_ASSET_PATH = "projects/ee-corestackdev/assets/apps/mws/"
 
 GEE_ASSET_PATH = f"projects/{GEE_STORAGE_PROJECT}/assets/apps/mws/"
@@ -311,7 +304,7 @@ INDIA_SAT_LULC_V3_PAN_INDIA = "/LULC_v3_river_basin/pan_india_lulc_v3_"
 ROAD_DRRP = "projects/ext-datasets/assets/datasets/Road_DRRP/"
 WWF_HYDROSHEDS_DRAINAGE_DIRECTION = "WWF/HydroSHEDS/03DIR"
 PAN_INDIA_RASTER_FABDEM = "projects/corestack-datasets/assets/datasets/terrain/pan_india_terrain_raster_fabdem"
-SOI_TEHSIL = _data_path("admin-boundary", "input", "soi_tehsil.geojson")
+SOI_TEHSIL = "data/admin-boundary/input/soi_tehsil.geojson"
 FABDEM = "projects/sat-io/open-datasets/FABDEM"
 WATERREJUVENATION = "projects/ee-corestackdev/assets/apps/waterrej/proj1"
 WATERREJ_LULCFORM = "projects/ee-corestackdev/assets/apps/waterrej/lulcfrom"
