@@ -112,14 +112,18 @@ docker run -d --name geoserver -p 8080:8080 \
   kartoza/geoserver:2.25.2
 ```
 
-Wait ~60s for startup, then create all workspaces:
+Wait ~60s for startup, then create all workspaces and sync styles:
 
 ```bash
 bash installation/install.sh --only geoserver \
   --geoserver-config http://localhost:8080/geoserver,admin,geoserver
+
+python installation/geoserver_style_bundle.py sync \
+  --url http://localhost:8080/geoserver \
+  --username admin --password geoserver
 ```
 
-> Note: the GeoServer container has no persistent storage. Repeat the `install.sh --only geoserver` step if you ever remove and recreate the container.
+> Note: the GeoServer container has no persistent storage. Repeat both commands if you ever remove and recreate the container.
 
 ## 10. Verify
 
