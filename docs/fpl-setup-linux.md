@@ -1,4 +1,4 @@
-# CoRE Stack — FPL Linux Setup
+# CoRE Stack: FPL Linux Setup
 
 **Time:** ~20 minutes. Get `core-stack-key.json` from #fpl-esg before starting.
 

@@ -77,7 +77,7 @@ def run_mws():
 
 
 def run_lulc():
-    print(f"\n[3/3] Running LULC v3 ({START_YEAR}-{END_YEAR}) — submits GEE image exports, may take 5-15 min...")
+    print(f"\n[3/3] Running LULC v3 ({START_YEAR}-{END_YEAR}): submits GEE image exports, may take 5-15 min...")
     from computing.lulc.lulc_v3 import clip_lulc_v3
     result = clip_lulc_v3.delay(
         state=STATE,

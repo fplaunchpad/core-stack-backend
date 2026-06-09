@@ -1,4 +1,4 @@
-# CoRE Stack — FPL Mac Setup
+# CoRE Stack: FPL Mac Setup
 
 **Time:** ~30 minutes. Get `core-stack-key.json` from #fpl-esg before starting.
 
