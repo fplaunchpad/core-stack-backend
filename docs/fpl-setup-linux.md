@@ -13,15 +13,14 @@ cd core-stack-backend
 
 ## 2. Start GeoServer
 
-Install Docker if needed (`sudo apt-get install docker.io`), then:
-
 ```bash
+sudo apt-get install -y docker.io   # skip if Docker is already installed
 sudo docker run -d --name geoserver -p 8080:8080 \
   -e GEOSERVER_ADMIN_PASSWORD=geoserver \
   kartoza/geoserver:2.25.2
 ```
 
-Start this before running the installer — the installer's GeoServer step will wait for it.
+Start this before the installer -- the installer waits for GeoServer to be ready before creating workspaces and syncing styles.
 
 ## 3. Run the installer
 
@@ -31,11 +30,11 @@ bash installation/install.sh \
   --geoserver-config http://localhost:8080/geoserver,admin,geoserver
 ```
 
-This handles: Miniconda, PostgreSQL, RabbitMQ, Python env, migrations, seed data, superuser (`admin`/`admin`), GEE key loading, and all GeoServer workspaces.
+This handles everything: Miniconda, PostgreSQL, RabbitMQ, Python env, migrations, superuser (`admin`/`admin`), admin boundary data, GEE key loading, GeoServer workspaces, and styles.
 
 ## 4. Add FPL-specific .env vars
 
-The installer generates `nrm_app/.env`. Append these lines:
+The installer generates `nrm_app/.env`. Append:
 
 ```env
 GEE_STORAGE_PROJECT=arcane-mason-493503-a6
@@ -58,6 +57,6 @@ Expected: `Internal API initialisation test passed.`
 
 ```bash
 conda activate corestackenv
-sudo docker start geoserver     # if not already running
+sudo docker start geoserver
 python manage.py runserver 0.0.0.0:8000 --noreload
 ```

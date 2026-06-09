@@ -11,6 +11,8 @@ brew install python@3.10 postgresql@14
 brew services start postgresql@14
 ```
 
+Install Docker Desktop from https://docker.com if you don't have it.
+
 ## 2. Clone
 
 ```bash
@@ -23,7 +25,6 @@ cd core-stack-backend
 ```bash
 python3.10 -m venv ../corestack-venv
 source ../corestack-venv/bin/activate
-
 pip install --upgrade pip setuptools wheel
 pip install \
   django==5.2.9 djangorestframework==3.15.2 django-cors-headers==4.7.0 \
@@ -83,6 +84,7 @@ OVERPASS_URL=https://overpass-api.de/api/interpreter
 ## 6. Migrations + superuser
 
 ```bash
+python manage.py makemigrations
 python manage.py migrate
 python manage.py createsuperuser  # use username: admin
 ```
@@ -95,8 +97,6 @@ bash installation/install.sh --only admin_boundary_data
 
 ## 8. Load GEE credentials
 
-Put `core-stack-key.json` anywhere on your machine, then:
-
 ```bash
 python manage.py shell -c "
 from utilities.gee_utils import upsert_gee_account_from_json
@@ -106,24 +106,25 @@ upsert_gee_account_from_json('/path/to/core-stack-key.json', account_name='fpl-g
 
 ## 9. GeoServer
 
+Start the container:
+
 ```bash
 docker run -d --name geoserver -p 8080:8080 \
   -e GEOSERVER_ADMIN_PASSWORD=geoserver \
   kartoza/geoserver:2.25.2
 ```
 
-Wait ~60s for startup, then create all workspaces and sync styles:
+Wait ~60s, then create workspaces and sync styles:
 
 ```bash
-bash installation/install.sh --only geoserver \
-  --geoserver-config http://localhost:8080/geoserver,admin,geoserver
+python installation/setup_local_geoserver.py
 
 python installation/geoserver_style_bundle.py sync \
   --url http://localhost:8080/geoserver \
   --username admin --password geoserver
 ```
 
-> Note: the GeoServer container has no persistent storage. Repeat both commands if you ever remove and recreate the container.
+> The GeoServer container has no persistent storage. Repeat these two commands if you ever remove and recreate the container.
 
 ## 10. Verify
 
@@ -139,6 +140,6 @@ Expected: `Internal API initialisation test passed.`
 
 ```bash
 source ../corestack-venv/bin/activate
-docker start geoserver          # if not already running
+docker start geoserver
 python manage.py runserver 0.0.0.0:8001 --noreload
 ```
