@@ -11,6 +11,7 @@ from nrm_app.settings import (
     GEE_HELPER_ACCOUNT_ID,
     FERNET_KEY,
     GCS_BUCKET_NAME,
+    GEE_STORAGE_PROJECT,
 )
 from utilities.constants import GEE_ASSET_PATH
 import ee, geetools
@@ -98,7 +99,7 @@ def ee_initialize(
                 "https://www.googleapis.com/auth/devstorage.full_control",
             ],
         )
-        ee.Initialize(credentials)
+        ee.Initialize(credentials, project=GEE_STORAGE_PROJECT or None)
 
         return True
     except Exception as exc:
@@ -379,8 +380,13 @@ def gdf_to_ee_fc(gdf):
 def create_gee_folder(folder_path, gee_project_path):
     full_path = gee_project_path + folder_path
     parts = full_path.split("/")
-    for i in range(1, len(parts) + 1):
+    # For Cloud Project paths (projects/<id>/assets/...), skip the first 3
+    # components since the asset root cannot be created via the API.
+    start = 4 if (len(parts) > 3 and parts[0] == "projects" and parts[2] == "assets") else 1
+    for i in range(start, len(parts) + 1):
         sub_path = "/".join(parts[:i])
+        if not sub_path:
+            continue
         try:
             ee.data.getAsset(sub_path)
             print(f"Exists: {sub_path}")
@@ -819,8 +825,12 @@ def gcs_to_gee_asset_cli(gcs_uri, asset_id, gee_account_id):
         service_account_file = f.name
 
     """Use earthengine CLI to upload from GCS to GEE asset"""
+    import sys
+    ee_cli = shutil.which("earthengine") or os.path.join(
+        os.path.dirname(sys.executable), "earthengine"
+    )
     command = [
-        "earthengine",
+        ee_cli,
         f"--service_account_file={service_account_file}",
         "upload",
         "table",
