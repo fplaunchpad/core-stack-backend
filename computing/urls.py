@@ -180,6 +180,11 @@ urlpatterns = [
         name="generate_facilities_proximity",
     ),
     path(
+        "generate_antyodaya/",
+        api.generate_antyodaya,
+        name="generate_antyodaya",
+    ),
+    path(
         "generate_stac_collection/",
         api.generate_stac_collection,
         name="generate_stac_collection",
