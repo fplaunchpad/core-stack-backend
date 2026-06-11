@@ -84,16 +84,25 @@ OVERPASS_URL=https://overpass-api.de/api/interpreter
 ## 6. Migrations + superuser
 
 ```bash
-python manage.py makemigrations
 python manage.py migrate
 python manage.py createsuperuser  # use username: admin
 ```
 
 ## 7. Admin boundary data
 
+One-time ~8GB download of the pan-India admin boundary dataset. This is the same archive `install.sh` fetches, but that script is Linux-only (apt-get), so run the Mac equivalent directly:
+
 ```bash
-bash installation/install.sh --only admin_boundary_data
+brew install p7zip
+pip install gdown
+gdown 1VqIhB6HrKFDkDnlk1vedcEHhh5fk4f1d -O /tmp/admin-boundary.7z
+7z x /tmp/admin-boundary.7z -o./data/ -y
+rm /tmp/admin-boundary.7z
 ```
+
+This populates `data/admin-boundary/input/` with state-wise district GeoJSONs and `soi_tehsil.geojson`. Note: extracted files carry old timestamps from the archive; that is normal.
+
+Before running a computing pipeline test for a new block (e.g. `lulc_pipeline_test.py`), generate that block's boundary once; the exact command is in the docstring of `computing/misc/lulc_pipeline_test.py`.
 
 ## 8. Load GEE credentials
 
