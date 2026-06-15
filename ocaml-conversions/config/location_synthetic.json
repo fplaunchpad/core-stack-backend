@@ -1,0 +1,8 @@
+{
+  "_comment": "Synthetic fixture for end-to-end verification without GEE. slug = test_synthetic_demo.",
+  "state": "test",
+  "district": "synthetic",
+  "block": "demo",
+  "gee_account_id": 1,
+  "module": "drainage_density"
+}

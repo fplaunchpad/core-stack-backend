@@ -1,0 +1,9 @@
+# downloaded GEE inputs and computed outputs are reproducible — don't commit them
+data/inputs/*
+data/outputs/python/*
+data/outputs/geocaml/*
+!**/.gitkeep
+# local config (keep only the example)
+config/location.json
+# OCaml build artifacts
+03_geocaml/_build/

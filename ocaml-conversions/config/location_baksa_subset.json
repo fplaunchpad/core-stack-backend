@@ -1,0 +1,8 @@
+{
+  "_comment": "Real-data subset: smallest single watershed of assam/baksa/baksa (keeps GEE getInfo under its 5000-feature cap). slug = assam_baksa_baksa_subset.",
+  "state": "assam",
+  "district": "baksa",
+  "block": "baksa_subset",
+  "gee_account_id": 1,
+  "module": "drainage_density"
+}

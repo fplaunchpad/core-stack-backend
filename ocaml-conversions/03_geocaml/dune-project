@@ -1,0 +1,9 @@
+(lang dune 3.0)
+
+(name corestack_geocompute)
+
+; The OCaml port of CoRE Stack geospatial computation.
+; Build needs: dune, and (as the geometry steps are filled in) the geocaml libs —
+;   ocaml-geojson, ocaml-proj — plus a GEOS binding. See ../../myref/Geocaml-exploring.md.
+; Until those are wired, the scaffold builds with yojson only (GeoJSON I/O works;
+; reproject/clip/length are TODO stubs).

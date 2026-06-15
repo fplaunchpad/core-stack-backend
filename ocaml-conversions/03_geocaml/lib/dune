@@ -1,0 +1,5 @@
+(library
+ (name geocompute)
+ ; yojson covers GeoJSON read/write for the scaffold.
+ ; TODO add when wiring geometry: geojson (ocaml-geojson) proj (ocaml-proj) + a GEOS binding.
+ (libraries yojson))

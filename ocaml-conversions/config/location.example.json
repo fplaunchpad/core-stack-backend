@@ -1,0 +1,8 @@
+{
+  "_comment": "Copy to location.json and edit. Pick a block that already has MWS + drainage_lines GEE assets generated (e.g. the installer sample assam/baksa/baksa).",
+  "state": "assam",
+  "district": "baksa",
+  "block": "baksa",
+  "gee_account_id": 1,
+  "module": "drainage_density"
+}
