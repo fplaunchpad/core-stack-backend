@@ -1,11 +1,10 @@
 import json
-
+import os
+import ee
 import geojson
 import geopandas as gpd
 from shapely import geometry
-import pickle
-import os
-import ee
+from typing import Any
 
 from utilities.gee_utils import (
     ee_initialize,
@@ -17,22 +16,36 @@ from utilities.gee_utils import (
 )
 from .crop_gridXlulc import crop_grids_lulc
 from nrm_app.celery import app
+# TODO: Documentation needed for these constants
 from utilities.constants import SOI_TEHSIL, CROP_GRID_PATH, CRS_4326
 
 
 @app.task(bind=True)
-def create_crop_grids(self, state, district, block, gee_account_id):
+def create_crop_grids(self, state: str, district: str
+                          , block: str, gee_account_id: int) -> bool:
     """
-    It will generate crop grid layer for the given location (tehsil level)
+    Generate crop grid layer for the given location (tehsil level)
+
+    For a given GEE asset located by a state-district-block combination,
+    this function:
+    - obtains the block co-ordinates
+    - generates a path based on state, district and block values
+    - generates GeoJSON coordinates based on the constructed path
+    - generates grids based on path and block co-ordinates
+    - generates a LULC layer based for a state-district-block combination and
+    returns it
     """
     ee_initialize(gee_account_id)
     description = (
         "crop_grid_"
         + valid_gee_text(district.lower())
         + "_"
-        + valid_gee_text(block.lower() + "_with_uid_16ha")
-    )
+        + valid_gee_text(block.lower() + "_with_uid_16ha"))
+
     asset_id = get_gee_asset_path(state, district, block) + description
+
+    # Use block co-ordinates to generate GeoJSON to FeatureCollection asset
+    # when a ready GEE asset is not available
     if not is_gee_asset_exists(asset_id):
         # Get block coordinates
         block_coords = get_block_coordinates(state, district, block)
@@ -43,7 +56,7 @@ def create_crop_grids(self, state, district, block, gee_account_id):
             os.mkdir(state_dir)
 
         path = os.path.join(
-            str(state_dir),
+            state_dir,
             f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}",
         )
 
@@ -55,7 +68,7 @@ def create_crop_grids(self, state, district, block, gee_account_id):
             f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}",
         )
 
-        # Generate required files
+        # Generate grid GeoJSON files
         gen_geojson_from_coords(path, block_coords)
         gen_grids(path, block_coords)
 
@@ -63,25 +76,33 @@ def create_crop_grids(self, state, district, block, gee_account_id):
         if task_id:
             task_id_list = check_task_status([task_id])
             print("task_id_list", task_id_list)
+
     layer_at_geoserver = crop_grids_lulc(state, district, block)
     return layer_at_geoserver
 
 
-def get_block_coordinates(state, district, block):
+def get_block_coordinates(state: str, district: str
+                                    , block: str) -> list[list[list[float]]]:
+    """
+    Compute the coordinates for tenhil polygons/multipolygons
+    """
     soi = gpd.read_file(SOI_TEHSIL)
 
-    soi = soi[(soi["STATE"].str.lower() == state)]
-    soi = soi[(soi["District"].str.lower() == district)]
-    soi = soi[(soi["TEHSIL"].str.lower() == block)]
-    print(soi)
+    # TODO: Why are the header names in different cases?
+    soi = soi[soi["STATE"].isin([state, state.lower(), state.upper()
+                                      , state.title()])]
+    soi = soi[soi["District"].isin([district, district.lower()
+                                    , district.upper(), district.title()])]
+    soi = soi[soi["TEHSIL"].isin([block, block.lower(), block.upper()
+                                  , block.title()])]
+
     coordinates = []
     for geometry in soi.geometry:
+        # Extract exterior coordinates and convert to list of lists
         if geometry.geom_type == "Polygon":
-            # Extract exterior coordinates and convert to list of lists
             poly_coords = [list(coord) for coord in geometry.exterior.coords]
             coordinates.append(poly_coords)
-            # Handle MultiPolygon geometries
-        elif geometry.geom_type == "MultiPolygon":
+        elif geometry.geom_type == "MultiPolygon": # Handle MultiPolygon geometries
             multi_poly_coords = []
             for polygon in geometry.geoms:
                 poly_coords = [list(coord) for coord in polygon.exterior.coords]
@@ -91,14 +112,17 @@ def get_block_coordinates(state, district, block):
     return coordinates
 
 
-def gen_geojson_from_coords(path, coords):
-    # Create GeoJSON directly without using the Polygon class
+def gen_geojson_from_coords(path: str, coords: list[list[list[float]]]) -> None:
+    """
+    Create GeoJSON data directly without using the Polygon class
+    coords is list of polygons where each polygon is list of list of coordinate pairs
+    """
     feature = {
         "type": "Feature",
         "properties": {"name": "poly1", "fill": "#FF0000"},
         "geometry": {
             "type": "Polygon",
-            "coordinates": coords,  # Use coords directly as it's already in the right format
+            "coordinates": coords
         },
     }
 
@@ -108,12 +132,12 @@ def gen_geojson_from_coords(path, coords):
         geojson.dump(feature_collection, f)
 
 
-def gen_grids(path, coords_list):
+def gen_grids(path: str, coords_list: list[list[list[float]]]) -> None:
     # Extract the inner coordinate list
     idx = 1
     for coords in coords_list:
-        x_ = []
-        y_ = []
+        x_ : list[float] = []
+        y_ : list[float] = []
         for coord in coords:
             x_.append(coord[0])  # longitude
             y_.append(coord[1])  # latitude
@@ -123,15 +147,15 @@ def gen_grids(path, coords_list):
         min_y = min(y_)
         max_y = max(y_)
 
-        grid_size = 0.004
-        cover_frac = 0.3
-        grid = []
+        grid_size: float = 0.004
+        cover_frac: float = 0.3
+        grid: list[list[list[float]]] = []
 
-        curr_x = min_x
-        curr_y = min_y
+        curr_x: float = min_x
+        curr_y: float = min_y
         while curr_x <= max_x:
             while curr_y <= max_y:
-                grid_cell = [
+                grid_cell : list[list[float]] = [
                     [curr_x, curr_y],
                     [curr_x + grid_size, curr_y],
                     [curr_x + grid_size, curr_y + grid_size],
@@ -146,8 +170,8 @@ def gen_grids(path, coords_list):
         # Create polygon from original coordinates
         poly2 = geometry.Polygon(coords)
 
-        final_grid = []
-        features = []
+        final_grid: list[list[list[float]]] = []
+        features: list[dict[str, Any]] = []
 
         for box in grid:
             try:
@@ -170,13 +194,6 @@ def gen_grids(path, coords_list):
                 print(f"Error processing grid cell: {e}")
                 continue
 
-        # with open(path + "_grids_without_LULC_" + str(idx) + ".txt", "w") as f:
-        #     for item in final_grid:
-        #         f.write("%s," % item)
-        #
-        # with open(path + "_grids_without_LULC_" + str(idx) + ".pkl", "wb") as f:
-        #     pickle.dump(final_grid, f)
-
         feature_collection = {"type": "FeatureCollection", "features": features}
 
         with open(path + "_grids_without_LULC_" + str(idx) + ".geojson", "w") as f:
@@ -185,30 +202,41 @@ def gen_grids(path, coords_list):
         idx += 1
 
 
-def gdf_to_ee_fc(gdf):
-    features = []
-    for i, row in gdf.iterrows():
-        properties = row.drop("geometry").to_dict()
-        geometry = ee.Geometry(row.geometry.__geo_interface__)
-        feature = ee.Feature(geometry, properties)
+def gdf_to_ee_fc(gdf: gpd.GeoDataFrame) ->  list[ee.Feature]:
+    """
+    Convert a GeoDataFrame to a list of EE Features with their
+    geometries and properties.
+    """
+    features: list[ee.Feature] = []
+    for _, row in gdf.iterrows():
+        properties: dict[str, Any] = row.drop("geometry").to_dict()
+        geometry: ee.Geometry = ee.Geometry(row.geometry.__geo_interface__)
+        feature: ee.Feature = ee.Feature(geometry, properties)
         features.append(feature)
     return features
 
 
-def convert_geojson_to_fc(state, district, block, path, geom_len):
-    """Converts the GeoJSON to FeatureCollection and pushes the feature collection to the
-    GEE Asset
+def convert_geojson_to_fc(state: str, district: str, block: str
+                                    , path: str
+                                    , geom_len: int) -> ee.batch.Task | None:
     """
-    features = []
+    Convert GeoJSON looked up via state-district-block to FeatureCollection
+    and pushes the feature collection to create a GEE asset
+    """
+    features : list[ee.Feature] = []
     for idx in range(1, geom_len + 1):
-        gdf = gpd.read_file(path + "_grids_without_LULC_" + str(idx) + ".geojson")
-        unique_ids = []
+        gdf: gpd.GeoDataFrame = gpd.read_file(path +
+                                                "_grids_without_LULC_" +
+                                                str(idx) + ".geojson")
+        unique_ids : list[str] = []
         for i in range(gdf.shape[0]):
             unique_ids.append(block + "_" + str(i))
+        # Create a new GDF columns with unique ids based on the current block
+        # and grids shapes from input GeoJSON
         gdf["uid"] = unique_ids
         gdf = gdf.to_crs(CRS_4326)
 
-        ee_fc = gdf_to_ee_fc(gdf)
+        ee_fc: list[ee.Feature] = gdf_to_ee_fc(gdf)
         features.extend(ee_fc)
     print("Features' count=", len(features))
 
@@ -226,30 +254,48 @@ def convert_geojson_to_fc(state, district, block, path, geom_len):
         return generate_crop_grid_gee(state, district, block, features, description)
 
 
-def generate_crop_grid_gee(state, district, block, features, description):
-    if not is_gee_asset_exists(
-        get_gee_asset_path(state, district, block) + description
-    ):
-        fc = ee.FeatureCollection(features)
+def generate_crop_grid_gee(state: str, district: str, block: str
+                                      , features: list[ee.Feature]
+                                      , description: str) -> ee.batch.Task | None:
+    """
+    Export a list of EE Features as a FeatureCollection to a GEE asset.
 
+    The function skips the export if the asset already exists. It returns
+    the export task, or None if the asset already exists or the export fails.
+    """
+
+    if not is_gee_asset_exists(get_gee_asset_path(state, district, block)
+                               + description):
+        fc: ee.FeatureCollection = ee.FeatureCollection(features)
         try:
-            task = export_vector_asset_to_gee(
+            exported_gee_asset = export_vector_asset_to_gee(
                 fc,
                 description,
                 get_gee_asset_path(state, district, block) + description,
             )
             print("Successfully started the crop_grid")
-            return task
+            return exported_gee_asset
         except Exception as e:
             print(f"Error occurred in running crop_grid task: {e}")
     return None
 
 
-def generate_in_chunks(block, district, features, state):
-    print("More than 15000 features")
-    chunk_size = 15000
-    task_list = []
-    asset_ids = []
+def generate_in_chunks(block: str, district: str, features: list[ee.Feature]
+                                                , state: str) -> ee.batch.Task | None:
+    """
+    Split features into chunks of 15000 and upload each as a separate GEE asset.
+
+    The function waits for all chunk uploads to complete, then merges them
+    into a single crop grid FeatureCollection asset for the given
+    state-district-block. It finally returns the merged asset
+    (via merge_chunks) or None if the merge fails.
+    """
+
+    chunk_size: int = 15000
+    print("NOTE: chunk size has more than 15000 features")
+    crop_task_list: list[str] = []
+    asset_ids: list[str] = []
+
     for i in range(0, len(features), chunk_size):
         print(i)
         chunk = features[i : i + chunk_size]
@@ -264,32 +310,42 @@ def generate_in_chunks(block, district, features, state):
         )
         asset_ids.append(get_gee_asset_path(state, district, block) + description)
 
-        task_id = generate_crop_grid_gee(state, district, block, chunk, description)
-        if task_id:
-            task_list.append(task_id)
+        crop_task = generate_crop_grid_gee(state, district, block, chunk, description)
+        if crop_task:
+            crop_task_list.append(crop_task)
 
-    check_task_status(task_list)
+    check_task_status(crop_task_list)
 
     return merge_chunks(state, district, block, asset_ids)
 
 
-def merge_chunks(state, district, block, asset_ids):
-    description = (
+def merge_chunks(state: str, district: str, block: str
+                           , asset_ids: list[str]) -> ee.batch.Task | None:
+    """
+    Merge separately uploaded chunk assets into a single GEE FeatureCollection
+    asset.
+
+    Looks up each asset in a list of given asset ids, flattens them into one FeatureCollection,
+    and exports it as the final crop grid asset for the given
+    state-district-block. It returns the export task, or None if the export fails.
+    """
+    gen_gee_description = (
         "crop_grid_"
-        + valid_gee_text(district.lower())
-        + "_"
+        + valid_gee_text(district.lower()) + "_"
         + valid_gee_text(block.lower() + "_with_uid_16ha")
     )
 
-    assets = []
-    for asset in asset_ids:
-        assets.append(ee.FeatureCollection(asset))
+    fc_assets = []
+    for asset_id in asset_ids:
+        fc_assets.append(ee.FeatureCollection(asset_id))
 
-    asset = ee.FeatureCollection(assets).flatten()
-    asset_id = get_gee_asset_path(state, district, block) + description
+    ee_vector_asset = ee.FeatureCollection(fc_assets).flatten()
+    gen_asset_id = get_gee_asset_path(state, district, block) + gen_gee_description
+
     try:
         # Export an ee.FeatureCollection as an Earth Engine asset.
-        task = export_vector_asset_to_gee(asset, description, asset_id)
+        task = export_vector_asset_to_gee(ee_vector_asset
+                                          , gen_gee_description, gen_asset_id)
         print("Successfully started the merge crop grid chunk")
         return task
     except Exception as e:
