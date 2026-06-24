@@ -1,10 +1,8 @@
 import ee
 from computing.utils import (
-    sync_layer_to_geoserver,
     sync_fc_to_geoserver,
     save_layer_info_to_db,
     update_layer_sync_status,
-    get_existing_end_year,
     get_layer_object,
 )
 from utilities.constants import GEE_PATHS
@@ -20,38 +18,52 @@ from utilities.gee_utils import (
 )
 from nrm_app.celery import app
 from utilities.geoserver_utils import Geoserver
-from dataclasses import dataclass
-from typing import Optional
+from enum import IntEnum
+from typing import Optional, Any
 
-geo = Geoserver()
+
+class LULCLabel(IntEnum):
+    BACKGROUND             = 0
+    BUILT_UP               = 1
+    WATER_KHARIF           = 2
+    WATER_KHARIF_RABI      = 3
+    WATER_KHARIF_RABI_ZAID = 4
+    TREE_FOREST            = 6
+    BARREN                 = 7
+    SINGLE_KHARIF          = 8
+    SINGLE_NON_KHARIF      = 9
+    DOUBLE                 = 10
+    TRIPLE                 = 11
+    SHRUB_SCRUB            = 12
 
 
 @app.task(bind=True)
 def generate_cropping_intensity(
     self,
-    state=None,
-    district=None,
-    block=None,
-    roi_path=None,
-    asset_suffix=None,
-    asset_folder_list=None,
-    app_type="MWS",
-    start_year=None,
-    end_year=None,
-    gee_account_id=None,
-    zoi_ci_asset=None,
-):
+    state: Optional[str] = None,
+    district: Optional[str] = None,
+    block: Optional[str] = None,
+    roi_path: Optional[str] = None,
+    asset_suffix: Optional[str] = None,
+    asset_folder_list: Optional[list[str]] = None,
+    app_type: str = "MWS",
+    start_year: Optional[int] = None,
+    end_year: Optional[int] = None,
+    gee_account_id: Optional[str] = None,
+    zoi_ci_asset: Optional[str] = None,
+) -> bool:
     """
-    It will generate croppingintensity layer for given location(tehsil level) or region of intrest.
+    Generate and sync a cropping intensity layer for a block-level location or
+    a custom region of interest.
     """
     ee_initialize(gee_account_id)
     if state and district and block:
-        asset_suffix = (
+        asset_suffix: str = (
             valid_gee_text(district.lower()) + "_" + valid_gee_text(block.lower())
         )
-        asset_folder_list = [state, district, block]
+        asset_folder_list: list[str] = [state, district, block]
 
-        roi_path = (
+        roi_path: str = (
             get_gee_dir_path(
                 asset_folder_list, asset_path=GEE_PATHS[app_type]["GEE_ASSET_PATH"]
             )
@@ -59,27 +71,29 @@ def generate_cropping_intensity(
         )
 
     if zoi_ci_asset:
-        description = "cropping_intensity_zoi_" + asset_suffix
-        layer_name = f"{asset_suffix}_intensity_ZOI"
+        description: str = "cropping_intensity_zoi_" + asset_suffix
+        layer_name: str = f"{asset_suffix}_intensity_ZOI"
     else:
-        description = "cropping_intensity_" + asset_suffix
-        layer_name = f"{asset_suffix}_intensity"
-    print(f"{description=}")
+        description: str = "cropping_intensity_" + asset_suffix
+        layer_name: str = f"{asset_suffix}_intensity"
+    print(f"Description: {description=}")
 
-    asset_id = (
+    asset_id: str = (
         get_gee_dir_path(
             asset_folder_list, asset_path=GEE_PATHS[app_type]["GEE_ASSET_PATH"]
         )
         + description
     )
 
-    print(f"{asset_id=}")
+    print(f"Asset id string: {asset_id=}")
 
     roi = ee.FeatureCollection(roi_path)
 
     if is_gee_asset_exists(asset_id):
-        layer_obj = None
+        layer_obj: Optional[Any] = None
         try:
+            # `get_layer_object` fetches the most recent Layer record matching a 
+            # geographic location + layer name + dataset
             layer_obj = get_layer_object(
                 state,
                 district,
@@ -87,16 +101,17 @@ def generate_cropping_intensity(
                 layer_name=layer_name,
                 dataset_name="Cropping Intensity",
             )
-        except Exception as e:
+        except Exception:
             print("DB layer not found for cropping intensity.")
 
-        existing_end_year = get_last_date(asset_id, layer_obj)
+        existing_end_year: int = get_last_date(asset_id, layer_obj)
 
         if existing_end_year < end_year:
-            new_start_year = existing_end_year
-            new_asset_id = f"{asset_id}_{new_start_year}_{end_year}"
-            new_description = f"{description}_{new_start_year}_{end_year}"
+            new_start_year: int = existing_end_year
+            new_asset_id: str = f"{asset_id}_{new_start_year}_{end_year}"
+            new_description: str = f"{description}_{new_start_year}_{end_year}"
 
+            # generate_gee_asset returns (task_id, asset_id); task_id is None if asset already exists.
             if not is_gee_asset_exists(new_asset_id):
                 print(f"{new_asset_id} doesn't exist")
                 new_task_id, new_asset_id = generate_gee_asset(
@@ -131,8 +146,8 @@ def generate_cropping_intensity(
             zoi=zoi_ci_asset,
         )
         if task_id:
-            task_id_list = check_task_status([task_id])
-            print("Cropping intensity task completed - task_id_list:", task_id_list)
+            task_status = check_task_status([task_id])
+            print("Cropping intensity task completed - task_status: ", task_status)
 
     layer_at_geoserver = save_to_db_and_sync_to_geoserver(
         layer_name=layer_name,
@@ -148,204 +163,179 @@ def generate_cropping_intensity(
 
 
 def generate_gee_asset(
-    roi,
-    asset_id,
-    description,
-    asset_suffix,
-    asset_folder_list,
-    app_type,
-    start_year,
-    end_year,
-    zoi=None,
-):
-    print("inside generate_gee_asset function ")
-    print(f"zoi ci {zoi}")
+    roi: ee.FeatureCollection,
+    asset_id: str,
+    description: str,
+    asset_suffix: str,
+    asset_folder_list: list[str],
+    app_type: str,
+    start_year: int,
+    end_year: int,
+    zoi: Optional[str] = None,
+) -> tuple[Optional[str], str]:
+    print("Now running the `generate_gee_asset` function.")
+    print(f"ZOI asset: {zoi}")
+    print(f"Final asset id: {asset_id}")
 
-    print(f"final asset id {asset_id}")
     if is_gee_asset_exists(asset_id):
         return None, asset_id
 
-    lulc_scale = 10
-    lulc_band_name = ["predicted_label"]
-    lulc_js_list = []
-    initial_year = 2017
-    s_year = initial_year  # start_year  # START_YEAR
-    while s_year <= end_year:
-        lulc_js_list.append(
+    lulc_scale: int = 10
+    lulc_band_name: list[str] = ["predicted_label"]
+    lulc_images: list[ee.Image] = []
+    initial_year: int = 2017
+    year: int = initial_year
+    while year <= end_year:
+        lulc_images.append(
             ee.Image(
                 get_gee_dir_path(
                     asset_folder_list, asset_path=GEE_PATHS[app_type]["GEE_ASSET_PATH"]
                 )
                 + asset_suffix
                 + "_"
-                + str(s_year)
+                + str(year)
                 + "-07-01_"
-                + str(s_year + 1)
+                + str(year + 1)
                 + "-06-30_LULCmap_10m"
             )
         )
-        s_year += 1
-    lulc = ee.List(lulc_js_list)
-    # Label New
-    # 0 - Background
-    # 1 - Built-up
-    # 2 - Water in Kharif
-    # 3 - Water in Kharif+Rabi
-    # 4 - Water in Kharif+Rabi+Zaid
-    # 6 - Tree/Forests
-    # 7 - Barren lands
-    # 8 - Single cropping cropland
-    # 9 - Single Non-Kharif cropping cropland
-    # 10 - Double cropping cropland
-    # 11 - Triple cropping cropland
-    # 12 - Shrub_Scrub
-    SINGLE_KHARIF = 8
-    SINGLE_NON_KHARIF = 9
-    DOUBLE = 10
-    TRIPLE = 11
+        year += 1
+    lulc: ee.List = ee.List(lulc_images)
+
     args = [
-        {"label": SINGLE_KHARIF, "txt": "single_kharif_cropped_area_"},
-        {"label": SINGLE_NON_KHARIF, "txt": "single_non_kharif_cropped_area_"},
-        {"label": DOUBLE, "txt": "doubly_cropped_area_"},
-        {"label": TRIPLE, "txt": "triply_cropped_area_"},
+        {"label": LULCLabel.SINGLE_KHARIF,     "txt": "single_kharif_cropped_area_"},
+        {"label": LULCLabel.SINGLE_NON_KHARIF, "txt": "single_non_kharif_cropped_area_"},
+        {"label": LULCLabel.DOUBLE,            "txt": "doubly_cropped_area_"},
+        {"label": LULCLabel.TRIPLE,            "txt": "triply_cropped_area_"},
     ]
 
-    def get_class_area(feature):
-        value = feature.get("sum")
-        value = ee.Number(value).multiply(0.0001)
-        return feature.set(arg["txt"] + str(sy), value)
+    def get_class_area(feature: ee.Feature) -> ee.Feature:
+        value: ee.Number = ee.Number(feature.get("sum")).multiply(0.0001)
+        return feature.set(arg["txt"] + str(current_year), value)
 
     for arg in args:
-        s_year = start_year
-        while s_year <= end_year:
-            sy = s_year
-            image = ee.Image(lulc.get(sy - initial_year)).select(lulc_band_name)
-            mask = image.eq(ee.Number(arg["label"]))
-            pixel_area = ee.Image.pixelArea()
-            forestArea = pixel_area.updateMask(mask)
-            roi = forestArea.reduceRegions(
+        year: int = start_year
+        while year <= end_year:
+            current_year: int = year
+            image: ee.Image = ee.Image(lulc.get(current_year - initial_year)).select(lulc_band_name)
+            mask: ee.Image = image.eq(ee.Number(arg["label"]))
+            pixel_area: ee.Image = ee.Image.pixelArea()
+            masked_pixel_area: ee.Image = pixel_area.updateMask(mask)
+            roi = masked_pixel_area.reduceRegions(
                 roi, ee.Reducer.sum(), lulc_scale, image.projection()
             )
-            s_year += 1
+            year += 1
             roi = roi.map(get_class_area)
-    # single cropped area
-    s_year = start_year
 
-    def get_single_cropped_area(feature):
-        single_kharif = ee.Number(feature.get("single_kharif_cropped_area_" + str(sy)))
-        single_non_kharif = ee.Number(
-            feature.get("single_non_kharif_cropped_area_" + str(sy))
+    # Single cropped area
+    year: int = start_year
+
+    def get_single_cropped_area(feature: ee.Feature) -> ee.Feature:
+        single_kharif: ee.Number = ee.Number(feature.get("single_kharif_cropped_area_" + str(current_year)))
+        single_non_kharif: ee.Number = ee.Number(
+            feature.get("single_non_kharif_cropped_area_" + str(current_year))
         )
         return feature.set(
-            "single_cropped_area_" + str(sy),
+            "single_cropped_area_" + str(current_year),
             single_kharif.add(single_non_kharif),
         )
 
-    while s_year <= end_year:
-        sy = s_year
-        s_year += 1
+    while year <= end_year:
+        current_year: int = year
+        year += 1
         roi = roi.map(get_single_cropped_area)
 
     # croppable area
-    single_kharif_all_years = ee.Image.constant(0)
-    single_non_kharif_all_years = ee.Image.constant(0)
-    triple_all_years = ee.Image.constant(0)
-    double_all_years = ee.Image.constant(0)
+    single_kharif_all_years: ee.Image = ee.Image.constant(0)
+    single_non_kharif_all_years: ee.Image = ee.Image.constant(0)
+    triple_all_years: ee.Image = ee.Image.constant(0)
+    double_all_years: ee.Image = ee.Image.constant(0)
 
-    s_year = initial_year  # start_year
+    year: int = initial_year
 
-    while s_year <= end_year:
-        sy = s_year
-        s_year += 1
-        image = ee.Image(lulc.get(sy - initial_year)).select(lulc_band_name)
-        single_kharif_all_years = single_kharif_all_years.Or(image.eq(SINGLE_KHARIF))
+    while year <= end_year:
+        image: ee.Image = ee.Image(lulc.get(year - initial_year)).select(lulc_band_name)
+        single_kharif_all_years = single_kharif_all_years.Or(image.eq(LULCLabel.SINGLE_KHARIF))
         single_non_kharif_all_years = single_non_kharif_all_years.Or(
-            image.eq(SINGLE_NON_KHARIF)
+            image.eq(LULCLabel.SINGLE_NON_KHARIF)
         )
-        double_all_years = double_all_years.Or(image.eq(DOUBLE))
-        triple_all_years = triple_all_years.Or(image.eq(TRIPLE))
+        double_all_years = double_all_years.Or(image.eq(LULCLabel.DOUBLE))
+        triple_all_years = triple_all_years.Or(image.eq(LULCLabel.TRIPLE))
+        year += 1
 
-    croppable_area_all_years = (
+    croppable_area_all_years: ee.Image = (
         single_kharif_all_years.Or(single_non_kharif_all_years)
         .Or(triple_all_years)
         .Or(double_all_years)
     )
-    mask = croppable_area_all_years
-    pixel_area = ee.Image.pixelArea()
-    croppable_area = pixel_area.updateMask(mask)
+    mask: ee.Image = croppable_area_all_years
+    pixel_area: ee.Image = ee.Image.pixelArea()
+    croppable_area: ee.Image = pixel_area.updateMask(mask)
     roi = croppable_area.reduceRegions(roi, ee.Reducer.sum(), lulc_scale)
 
-    def calculate_total_cropped_area(feature):
-        value = feature.get("sum")
-        value = ee.Number(value).multiply(0.0001)
+    def calculate_total_cropped_area(feature: ee.Feature) -> ee.Feature:
+        value: ee.Number = ee.Number(feature.get("sum")).multiply(0.0001)
         return feature.set(
             "total_cropable_area_ever_hydroyear_"
             + str(initial_year)
             + "_"
             + str(end_year),
-            value,
+            value
         )
 
     roi = roi.map(calculate_total_cropped_area)
 
-    def calculate_cropping_intensity(feature):
-        st_year = start_year
-        while st_year <= end_year:
-            year = st_year
-            st_year += 1
-            total_croppable_area = feature.get(
+    def calculate_cropping_intensity(feature: ee.Feature) -> ee.Feature:
+        year: int = start_year
+        while year <= end_year:
+            total_croppable_area: ee.Number = ee.Number(feature.get(
                 "total_cropable_area_ever_hydroyear_"
                 + str(initial_year)
                 + "_"
                 + str(end_year)
-            )
-            total_croppable_area = ee.Number(total_croppable_area)
+            ))
 
-            single_cropped_area_ = feature.get("single_cropped_area_" + str(year))
-            single_cropped_area_ = ee.Number(single_cropped_area_)
+            single_cropped_area: ee.Number = ee.Number(feature.get("single_cropped_area_" + str(year)))
+            double_cropped_area: ee.Number = ee.Number(feature.get("doubly_cropped_area_" + str(year)))
+            triple_cropped_area: ee.Number = ee.Number(feature.get("triply_cropped_area_" + str(year)))
 
-            double_cropped_area_ = feature.get("doubly_cropped_area_" + str(year))
-            double_cropped_area_ = ee.Number(double_cropped_area_)
+            single_fraction: ee.Number = single_cropped_area.divide(total_croppable_area)
+            double_fraction: ee.Number = double_cropped_area.divide(total_croppable_area)
+            triple_fraction: ee.Number = triple_cropped_area.divide(total_croppable_area)
 
-            triple_cropped_area_ = feature.get("triply_cropped_area_" + str(year))
-            triple_cropped_area_ = ee.Number(triple_cropped_area_)
-
-            sngl_frac = (single_cropped_area_.divide(total_croppable_area)).multiply(1)
-            dbl_frac = (double_cropped_area_.divide(total_croppable_area)).multiply(1)
-            trpl_frac = (triple_cropped_area_.divide(total_croppable_area)).multiply(1)
-
-            cropping_intensity_ = sngl_frac.add(dbl_frac.multiply(2)).add(
-                trpl_frac.multiply(3)
+            cropping_intensity: ee.Number = single_fraction.add(double_fraction.multiply(2)).add(
+                triple_fraction.multiply(3)
             )
 
             feature = feature.set(
-                "cropping_intensity_" + str(year), cropping_intensity_
+                "cropping_intensity_" + str(year), cropping_intensity
             )
+            year += 1
 
         return feature
 
     roi = ee.FeatureCollection(roi.map(calculate_cropping_intensity))
 
     # Export feature collection to GEE
-    task_id = export_vector_asset_to_gee(roi, description, asset_id)
+    task_id: Optional[str] = export_vector_asset_to_gee(roi, description, asset_id)
     return task_id, asset_id
 
 
 def save_to_db_and_sync_to_geoserver(
-    layer_name=None,
-    asset_id=None,
-    start_year=None,
-    end_year=None,
-    asset_suffix=None,
-    state=None,
-    district=None,
-    block=None,
-):
-    print("inside save_to_db_and_sync_to_geoserver")
-    layer_id = None
-    if (
-        state and district and block
-    ):  # TODO currently saving info to DB for block level layers only, make changes to accommodate all
+    layer_name: Optional[str] = None,
+    asset_id: Optional[str] = None,
+    start_year: Optional[int] = None,
+    end_year: Optional[int] = None,
+    asset_suffix: Optional[str] = None,
+    state: Optional[str] = None,
+    district: Optional[str] = None,
+    block: Optional[str] = None,
+) -> bool:
+    print("Now processing `save_to_db_and_sync_to_geoserver` ... ")
+    layer_id: Optional[Any] = None
+    # TODO: currently saving info to DB for block level layers only, 
+    # make changes to accommodate others
+    if (state and district and block):  
         layer_id = save_layer_info_to_db(
             state=state,
             district=district,
@@ -362,25 +352,25 @@ def save_to_db_and_sync_to_geoserver(
     make_asset_public(asset_id)
 
     fc = ee.FeatureCollection(asset_id)
-    res = sync_fc_to_geoserver(fc, asset_suffix, layer_name, "crop_intensity")
-    print(res)
-    layer_at_geoserver = False
-    if (
-        res["status_code"] == 201 and layer_id
-    ):  # TODO currently saving info to DB for block level layers only, make changes to accommodate all
+    sync_result: dict[str, Any] = sync_fc_to_geoserver(fc, asset_suffix, layer_name, "crop_intensity")
+    print(f"Geoserver sync result: {sync_result}")
+    layer_at_geoserver: bool = False
+    # TODO: currently saving info to DB for block level layers only, 
+    # make changes to accommodate all
+    if (sync_result["status_code"] == 201 and layer_id):  
         update_layer_sync_status(layer_id=layer_id, sync_to_geoserver=True)
         print("sync to geoserver flag updated")
         layer_at_geoserver = True
     return layer_at_geoserver
 
 
-def get_last_date(asset_id, layer_obj):
+def get_last_date(asset_id: str, layer_obj: Optional[Any]) -> int:
     if layer_obj:
         existing_end_year = layer_obj.misc["end_year"]
     else:
-        fc = ee.FeatureCollection(asset_id)
-        col_names = fc.first().propertyNames().getInfo()
-        filtered_col = [
+        fc: ee.FeatureCollection = ee.FeatureCollection(asset_id)
+        col_names: list[str] = fc.first().propertyNames().getInfo()
+        filtered_col: list[str] = [
             col.split("_")[2]
             for col in col_names
             if col.startswith("cropping_intensity_")
