@@ -83,3 +83,4 @@ dependencies:
       - orjson
       - ijson
       - polars
+      - pygbif
