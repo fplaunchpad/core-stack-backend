@@ -15,7 +15,7 @@
 #     --skip unzip_install,miniconda,rabbitmq,conda_env,geoserver
 # ============================================================
 
-FROM --platform=linux/arm64 ubuntu:24.04
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
@@ -24,7 +24,19 @@ ENV TZ=UTC
 RUN apt-get update && apt-get install -y \
     git wget curl build-essential libpq-dev unzip \
     sudo ca-certificates gnupg lsb-release \
+    libpango-1.0-0 libpangoft2-1.0-0 libpangocairo-1.0-0 \
+    libcairo2 libgdk-pixbuf2.0-0 libffi-dev shared-mime-info \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# weasyprint looks for libpango-1.0-0 without .so.0 suffix — create symlinks
+RUN ARCH=$(uname -m) && \
+    ln -sf /usr/lib/${ARCH}-linux-gnu/libpango-1.0.so.0 \
+           /usr/lib/${ARCH}-linux-gnu/libpango-1.0-0 && \
+    ln -sf /usr/lib/${ARCH}-linux-gnu/libpangocairo-1.0.so.0 \
+           /usr/lib/${ARCH}-linux-gnu/libpangocairo-1.0-0 && \
+    ln -sf /usr/lib/${ARCH}-linux-gnu/libpangoft2-1.0.so.0 \
+           /usr/lib/${ARCH}-linux-gnu/libpangoft2-1.0-0 && \
+    ldconfig
 
 # ── 2. PostgreSQL ─────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y \
@@ -94,13 +106,26 @@ WORKDIR /opt
 RUN git clone https://github.com/core-stack-org/core-stack-backend.git corestack
 WORKDIR /opt/corestack
 
-RUN conda env create -f installation/environment.yml \
-    && conda clean -afy
+# Create the conda env with conda packages only first, then run pip separately
+# so build failures show exactly which package is causing the problem
+RUN conda env create -f installation/environment.yml 2>&1 || \
+    ( echo "=== CONDA ENV CREATE FAILED ===" && \
+      conda env create -f installation/environment.yml --no-deps 2>&1 ; \
+      exit 1 )
+
+RUN conda clean -afy
 
 # ── 8. Fix missing/broken packages ───────────────────────────────────────────
 SHELL ["/opt/conda/bin/conda", "run", "-n", "corestack-backend", "/bin/bash", "-c"]
 
-RUN pip install pyogrio "setuptools<81" psycopg2-binary
+RUN pip install --timeout 120 --retries 5 \
+    pyogrio "setuptools<81" psycopg2-binary
+
+# Install weasyprint via conda-forge — pip version conflicts with Ubuntu 24.04
+# system pango (undefined symbol: g_once_init_leave_pointer).
+# conda-forge brings its own compatible pango/glib stack.
+RUN conda install -n corestack-backend -c conda-forge weasyprint -y \
+    && conda clean -afy
 
 # ── 9. Create required runtime data directories ───────────────────────────────
 RUN mkdir -p \
@@ -119,11 +144,10 @@ RUN sed -i \
     's|os.makedirs(WHATSAPP_MEDIA_PATH, exist_ok=True)|if WHATSAPP_MEDIA_PATH: os.makedirs(WHATSAPP_MEDIA_PATH, exist_ok=True)|' \
     /opt/corestack/bot_interface/api.py
 
-# Disable automatic GeoServer style assignment — styles can be applied
-# manually via the GeoServer UI. The auto-assignment fails if the named
-# style doesn't exist, causing a 500 error that aborts the whole task.
+# Patch publish_style to gracefully skip if the style doesn't exist in GeoServer
+# rather than raising a 500 exception that aborts the entire task.
 RUN sed -i \
-    's|    if style_name:|    if False:  # style disabled — apply via GeoServer UI|' \
+    's|    if style_name:|    if style_name and False:  # disabled: apply styles manually via GeoServer UI|' \
     /opt/corestack/utilities/gee_utils.py
 
 # ── 11. Patch computing/tasks.py — register all Celery tasks ─────────────────
