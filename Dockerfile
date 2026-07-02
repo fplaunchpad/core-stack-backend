@@ -103,7 +103,7 @@ RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkg
 
 # ── 7. Clone repo and create conda environment ────────────────────────────────
 WORKDIR /opt
-RUN git clone https://github.com/core-stack-org/core-stack-backend.git corestack
+RUN git clone -b test-local-config https://github.com/fplaunchpad/core-stack-backend.git corestack
 WORKDIR /opt/corestack
 
 # Create the conda env with conda packages only first, then run pip separately
