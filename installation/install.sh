@@ -1713,6 +1713,7 @@ function load_seed_data() {
     if [ "$force" -ne 1 ] && seed_data_loaded; then
         echo "Seed data already looks loaded. Keeping the existing database contents."
         python manage.py seed_default_plantation --skip-checks
+        python manage.py register_biodiversity_layer --skip-checks
         mark_step_complete "seed_data"
         return
     fi
@@ -1720,6 +1721,7 @@ function load_seed_data() {
     echo "Loading seed data..."
     python manage.py loaddata --skip-checks "$seed_file"
     python manage.py seed_default_plantation --skip-checks
+    python manage.py register_biodiversity_layer --skip-checks
     echo "Seed data loaded."
     mark_step_complete "seed_data"
 }

@@ -22,6 +22,7 @@ _USECOLS = [
     "eventDate",
     "year",
     "iucnRedListCategory",
+    "stateProvince",
 ]
 
 

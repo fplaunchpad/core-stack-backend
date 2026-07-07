@@ -94,6 +94,7 @@ def generate_mws_data_for_kyl_filters(
                 "river": -1,
                 "lulc_vector": -1,
                 "drainage_density": -1,
+                "biodiversity": -1,
             }
 
             try:
@@ -981,6 +982,38 @@ def generate_mws_data_for_kyl_filters(
                     print(f"Error in getting drainage_density data: {e}")
                     drainage_density = 0
 
+                ############ Biodiversity (GBIF) ########################
+                species_richness = 0
+                occurrence_count = 0
+                threatened_species_count = 0
+                shannon_diversity_index = 0
+                dominant_class = "Unknown"
+                biodiversity_category = "Unknown"
+                biodiversity_data_poor = True
+                try:
+                    biodiversity_df = sheets["biodiversity"]
+                    if biodiversity_df is not -1 and not biodiversity_df.empty:
+                        mws_bio_data = biodiversity_df[
+                            biodiversity_df["UID"] == specific_mws_id
+                        ]
+                        if not mws_bio_data.empty:
+                            row = mws_bio_data.iloc[0]
+                            species_richness = int(row.get("species_richness", 0))
+                            occurrence_count = int(row.get("occurrence_count", 0))
+                            threatened_species_count = int(
+                                row.get("threatened_species_count", 0)
+                            )
+                            shannon_diversity_index = round(
+                                float(row.get("shannon_diversity_index", 0)), 3
+                            )
+                            dominant_class = row.get("dominant_class", "Unknown")
+                            biodiversity_category = row.get(
+                                "biodiversity_category", "Unknown"
+                            )
+                            biodiversity_data_poor = bool(row.get("data_poor", True))
+                except Exception as e:
+                    print(f"Error in getting biodiversity data: {e}")
+
                 results.append(
                     {
                         "mws_id": specific_mws_id,
@@ -1031,6 +1064,13 @@ def generate_mws_data_for_kyl_filters(
                         "lulc_forest_percent": lulc_forest_percent,
                         "lulc_crop_percent": lulc_crop_percent,
                         "drainage_density": drainage_density,
+                        "species_richness": species_richness,
+                        "occurrence_count": occurrence_count,
+                        "threatened_species_count": threatened_species_count,
+                        "shannon_diversity_index": shannon_diversity_index,
+                        "dominant_taxon_group": dominant_class,
+                        "biodiversity_category": biodiversity_category,
+                        "biodiversity_data_poor": biodiversity_data_poor,
                     }
                 )
 

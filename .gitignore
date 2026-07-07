@@ -51,3 +51,7 @@ users/migrations/*.py
 
 .installation_state/
 core-stack-key.json
+# GBIF biodiversity local data & caches (do not commit)
+computing/gbif/_data/
+computing/gbif/_cache/
+computing/gbif/**/__pycache__/

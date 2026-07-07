@@ -1,15 +1,16 @@
 """
-Phase 1 — download GBIF occurrences for a taxon + area + year window.
+Phase 1 — download GBIF occurrences for one block (UK plan, block-first).
 
-Uses the GBIF **Download API** (async: request -> GBIF prepares a zip -> we fetch it), which has no
-100k record cap. Results are cached on disk keyed by (taxon_key, start_year, end_year) so we never
-re-download the same slice — GBIF downloads are large and slow.
+Downloads ALL taxa within the block's bounding box via the GBIF Download API (async: request ->
+GBIF prepares a zip -> we fetch it), which has no 100k record cap. The bbox is derived from the
+block's MWS GEE asset so there is a single source of truth for "where is this block".
 
 Docs: https://pygbif.readthedocs.io/en/latest/modules/occurrence.html
       https://techdocs.gbif.org/en/data-use/api-downloads
 """
 
 import os
+import json
 import time
 import zipfile
 
@@ -18,23 +19,52 @@ from pygbif import occurrences as occ
 from . import config
 
 
-def _cache_paths(taxon_key, start_year, end_year):
-    slug = f"taxon{taxon_key}_{start_year}_{end_year}"
-    base = os.path.join(config.CACHE_DIR, slug)
-    return base, base + ".csv", os.path.join(base, "meta.txt")
+def get_block_bbox_wkt(state, district, block, buffer_deg=0.01):
+    """
+    Compute the block bounding box as a WKT POLYGON from the MWS GEE asset.
+    Requires ee_initialize() to have been called by the caller.
+
+    A bbox (not the exact MWS union) is intentional: GBIF's geometry predicate wants a simple
+    polygon, and the precise per-MWS assignment happens later in the GEE spatial join.
+    """
+    import ee
+    from utilities.gee_utils import get_gee_asset_path, valid_gee_text
+
+    roi = ee.FeatureCollection(
+        get_gee_asset_path(state, district, block)
+        + "filtered_mws_"
+        + valid_gee_text(district.lower())
+        + "_"
+        + valid_gee_text(block.lower())
+        + "_uid"
+    )
+    # bounds() -> rectangle geometry; coordinates is a single ring of [lon, lat] pairs
+    ring = roi.geometry().bounds().getInfo()["coordinates"][0]
+    lons = [pt[0] for pt in ring]
+    lats = [pt[1] for pt in ring]
+    minlon, maxlon = min(lons) - buffer_deg, max(lons) + buffer_deg
+    minlat, maxlat = min(lats) - buffer_deg, max(lats) + buffer_deg
+    return (
+        f"POLYGON(({minlon} {minlat},{maxlon} {minlat},"
+        f"{maxlon} {maxlat},{minlon} {maxlat},{minlon} {minlat}))"
+    )
 
 
-def request_download(taxon_key, start_year, end_year, country="IN"):
-    """Ask GBIF to prepare a download. Returns the download key (a citable DOI handle)."""
+def request_block_download(bbox_wkt):
+    """
+    Ask GBIF to prepare a download of ALL occurrences within the block bbox. Returns a download key.
+
+    pygbif parses "KEY OP VALUE" strings where KEY is the camelCase API field name (it uppercases
+    to the download-predicate key itself). The `in` list must be valid JSON (double-quoted); the
+    `geometry within <wkt>` form is parsed to a {"type":"within",...} predicate. Verified against
+    pygbif 0.6.6.
+    """
     predicates = [
-        f"COUNTRY = {country}",
-        "HAS_COORDINATE = TRUE",
-        "HAS_GEOSPATIAL_ISSUE = FALSE",
-        "OCCURRENCE_STATUS = PRESENT",
-        f"TAXON_KEY = {taxon_key}",
-        f"YEAR >= {start_year}",
-        f"YEAR <= {end_year}",
-        "BASIS_OF_RECORD in [{}]".format(", ".join(config.KEEP_BASIS_OF_RECORD)),
+        "hasCoordinate = TRUE",
+        "hasGeospatialIssue = FALSE",
+        "occurrenceStatus = PRESENT",
+        "basisOfRecord in " + json.dumps(config.KEEP_BASIS_OF_RECORD),
+        f"geometry within {bbox_wkt}",
     ]
     key = occ.download(
         queries=predicates,
@@ -66,33 +96,57 @@ def wait_and_fetch(download_key, dest_dir, poll_seconds=60):
     return os.path.join(extract_dir, f"{download_key}.csv")
 
 
-def download_occurrences(taxon_key, start_year, end_year, country="IN"):
+def _read_meta(meta_path):
+    meta = {}
+    if os.path.exists(meta_path):
+        for line in open(meta_path):
+            if "=" in line:
+                k, v = line.strip().split("=", 1)
+                meta[k] = v or None
+    if "raw_record_count" in meta and meta["raw_record_count"] is not None:
+        try:
+            meta["raw_record_count"] = int(meta["raw_record_count"])
+        except ValueError:
+            meta["raw_record_count"] = None
+    return meta
+
+
+def download_block_occurrences(state, district, block):
     """
-    Cached entry point. Returns the local path to the raw occurrences CSV for this slice,
-    reusing a prior download if present. Also records the DOI for citation.
+    Cached block download: bbox from MWS asset -> GBIF download -> local raw CSV.
+    Returns (csv_path, meta) where meta = {download_key, doi, download_date, raw_record_count}
+    (provenance stored in Layer.misc). Reuses a prior download for the same block if present.
     """
-    os.makedirs(config.CACHE_DIR, exist_ok=True)
-    base, cached_csv, meta_path = _cache_paths(taxon_key, start_year, end_year)
+    os.makedirs(config.DATA_DIR, exist_ok=True)
+    block_dir = os.path.join(config.DATA_DIR, state, district, block)
+    cached_csv = os.path.join(block_dir, "occurrences_raw.csv")
+    meta_path = os.path.join(block_dir, "meta.txt")
     if os.path.exists(cached_csv):
-        print(f"[gbif] cache hit: {cached_csv}")
-        return cached_csv
+        print(f"[gbif] block cache hit: {cached_csv}")
+        return cached_csv, _read_meta(meta_path)
 
     if not (config.GBIF_USER and config.GBIF_PWD and config.GBIF_EMAIL):
-        raise RuntimeError(
-            "GBIF_USER / GBIF_PWD / GBIF_EMAIL must be set to use the Download API."
-        )
+        raise RuntimeError("GBIF_USER / GBIF_PWD / GBIF_EMAIL must be set.")
 
-    os.makedirs(base, exist_ok=True)
-    key = request_download(taxon_key, start_year, end_year, country=country)
-    csv_path = wait_and_fetch(key, base)
+    os.makedirs(block_dir, exist_ok=True)
+    bbox_wkt = get_block_bbox_wkt(state, district, block)
+    print(f"[gbif] block bbox: {bbox_wkt}")
+    key = request_block_download(bbox_wkt)
+    csv_path = wait_and_fetch(key, block_dir)
 
-    # Cache: move the CSV to the stable cached path and record provenance (DOI).
     os.replace(csv_path, cached_csv)
+    meta = {"download_key": str(key), "doi": None, "download_date": None, "raw_record_count": None}
     try:
-        meta = occ.download_meta(key)
+        gbif_meta = occ.download_meta(key)
+        meta["doi"] = gbif_meta.get("doi")
+        # GBIF's 'created' is an ISO timestamp; keep the date part for the report
+        created = gbif_meta.get("created")
+        meta["download_date"] = created.split("T")[0] if created else None
+        meta["raw_record_count"] = gbif_meta.get("totalRecords")
         with open(meta_path, "w") as fh:
-            fh.write(f"download_key={key}\ndoi={meta.get('doi')}\n")
-    except Exception as exc:  # provenance is best-effort
+            for k, v in meta.items():
+                fh.write(f"{k}={'' if v is None else v}\n")
+    except Exception as exc:
         print(f"[gbif] could not record download meta: {exc}")
-    print(f"[gbif] downloaded -> {cached_csv} (key={key})")
-    return cached_csv
+    print(f"[gbif] block downloaded -> {cached_csv} ({meta})")
+    return cached_csv, meta

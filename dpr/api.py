@@ -59,6 +59,7 @@ from .gen_mws_report import (
     get_drought_data,
     get_osm_data,
     get_soge_data,
+    get_biodiversity_data,
     get_surface_Water_bodies_data,
     get_terrain_data,
     get_village_data,
@@ -80,6 +81,7 @@ from .gen_tehsil_report import (
     get_socio_economic_nrega_data,
     get_fishery_water_potential_data,
     get_agroforestry_transition_data,
+    get_biodiversity_summary_data,
 )
 from .gen_report_download import render_pdf_with_firefox
 from .utils import validate_email, transform_name
@@ -270,6 +272,11 @@ def generate_mws_report(request):
         # ? SOGE Description
         soge_desc = get_soge_data(state, district, block, uid)
 
+        # ? Biodiversity (GBIF) Description
+        biodiversity_desc, biodiversity_data = get_biodiversity_data(
+            state, district, block, uid
+        )
+
         # ? Drought Description
         drought_desc, drought_weeks, mod_drought, sev_drought, drysp_all, dg_years = (
             get_drought_data(state, district, block, uid)
@@ -327,6 +334,8 @@ def generate_mws_report(request):
             "inten_desc1": inten_desc1,
             "inten_desc2": inten_desc2,
             "soge_desc": soge_desc,
+            "biodiversity_desc": biodiversity_desc,
+            "biodiversity_data": biodiversity_data,
             "mws_areas": json.dumps(mws_areas),
             "block_areas": json.dumps(block_areas),
             "lulc_mws_slope": json.dumps(lulc_mws_slope),
@@ -510,6 +519,9 @@ def generate_tehsil_report(request):
         agroforestry_transition, agroforestry_sankey = get_agroforestry_transition_data(
             result["state"], result["district"], result["block"]
         )
+        biodiversity_summary = get_biodiversity_summary_data(
+            result["state"], result["district"], result["block"]
+        )
 
         # print("Active Patterns", active_pattern)
         active_pattern = mws_pattern_intensity_with_active_pattern.get(
@@ -551,6 +563,8 @@ def generate_tehsil_report(request):
             "fishery_timeline_json": json.dumps(fishery_timeline),
             "agroforestry_transition_json": json.dumps(agroforestry_transition),
             "agroforestry_sankey_json": json.dumps(agroforestry_sankey),
+            "biodiversity_summary": biodiversity_summary,
+            "biodiversity_summary_json": json.dumps(biodiversity_summary),
         }
 
         return render(request, "block-report.html", context)

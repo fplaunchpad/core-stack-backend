@@ -53,10 +53,7 @@ from .clart.clart import generate_clart_layer
 from .misc.admin_boundary import generate_tehsil_shape_file_data
 from .misc.nrega import clip_nrega_district_block
 from computing.change_detection.change_detection import get_change_detection
-from computing.gbif.species_task import (
-    generate_species_richness,
-    generate_species_change,
-)
+from computing.gbif.biodiversity_task import generate_biodiversity_block
 from .lulc.lulc_v3 import clip_lulc_v3
 from .crop_grid.crop_grid import create_crop_grids
 from .tree_health.ccd import tree_health_ccd_raster
@@ -734,59 +731,24 @@ def change_detection_vector(request):
 
 @api_view(["POST"])
 @schema(None)
-def species_richness(request):
-    """Level A — per-MWS species richness snapshot for a GBIF taxon (Plan B)."""
-    print("Inside species_richness api")
+def generate_biodiversity_layer(request):
+    """Block-first GEE-native GBIF biodiversity layer (Plan B / UK plan)."""
+    print("Inside generate_biodiversity_layer api")
     try:
         state = request.data.get("state").lower()
         district = request.data.get("district").lower()
         block = request.data.get("block").lower()
-        taxon_key = request.data.get("taxon_key")
-        start_year = request.data.get("start_year")
-        end_year = request.data.get("end_year")
         gee_account_id = request.data.get("gee_account_id")
-        generate_species_richness.apply_async(
-            args=[
-                state, district, block, taxon_key,
-                start_year, end_year, gee_account_id,
-            ],
+        generate_biodiversity_block.apply_async(
+            args=[state, district, block, gee_account_id],
             queue="nrm",
         )
         return Response(
-            {"Success": "species_richness task initiated"},
+            {"Success": "biodiversity task initiated"},
             status=status.HTTP_200_OK,
         )
     except Exception as e:
-        print("Exception in species_richness api :: ", e)
-        return Response({"Exception": e}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(["POST"])
-@schema(None)
-def species_change(request):
-    """Level B — rarefied species richness change (then vs now) for a GBIF taxon (Plan B)."""
-    print("Inside species_change api")
-    try:
-        state = request.data.get("state").lower()
-        district = request.data.get("district").lower()
-        block = request.data.get("block").lower()
-        taxon_key = request.data.get("taxon_key")
-        start_year = request.data.get("start_year")
-        end_year = request.data.get("end_year")
-        gee_account_id = request.data.get("gee_account_id")
-        generate_species_change.apply_async(
-            args=[
-                state, district, block, taxon_key,
-                start_year, end_year, gee_account_id,
-            ],
-            queue="nrm",
-        )
-        return Response(
-            {"Success": "species_change task initiated"},
-            status=status.HTTP_200_OK,
-        )
-    except Exception as e:
-        print("Exception in species_change api :: ", e)
+        print("Exception in generate_biodiversity_layer api :: ", e)
         return Response({"Exception": e}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 

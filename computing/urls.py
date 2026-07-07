@@ -60,8 +60,11 @@ urlpatterns = [
         api.change_detection_vector,
         name="change_detection_vector",
     ),
-    path("species_richness/", api.species_richness, name="species_richness"),
-    path("species_change/", api.species_change, name="species_change"),
+    path(
+        "generate_biodiversity_layer/",
+        api.generate_biodiversity_layer,
+        name="generate_biodiversity_layer",
+    ),
     path("crop_grid/", api.crop_grid, name="crop_grid"),
     path("tree_health_raster/", api.tree_health_raster, name="tree_health_raster"),
     path("tree_health_vector/", api.tree_health_vector, name="tree_health_vector"),

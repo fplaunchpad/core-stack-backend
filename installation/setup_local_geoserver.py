@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 import requests
 from requests.auth import HTTPBasicAuth
 
 WORKSPACES = [
-    "admin_boundaries", "agroecological", "aquifer", "block_boundaries",
+    "admin_boundaries", "agroecological", "aquifer", "biodiversity", "block_boundaries",
     "canopy_height", "catchment_area_singleflow", "ccd", "change_detection",
     "cite", "clart", "corestack", "crop_grid_layers", "crop_intensity",
     "cropping_drought", "cropping_intensity", "customkml", "dem",
@@ -61,6 +62,39 @@ def create_workspaces(base_url: str, username: str, password: str) -> None:
     print(f"Workspaces: {created} created, {existed} already existed, {failed} failed.")
 
 
+# Workspace-scoped SLD styles to provision from the repo (name -> .sld file under geoserver/styles).
+STYLES = {
+    "biodiversity": ("biodiversity_mws", "biodiversity_mws.sld"),
+}
+_STYLES_DIR = Path(__file__).resolve().parent / "geoserver" / "styles"
+
+
+def create_styles(base_url: str, username: str, password: str) -> None:
+    """Idempotently upload repo SLD styles into their workspace.
+
+    `upload_style` only writes the SLD body when the style entry is newly created, so we
+    delete any existing entry first, then POST the SLD content (which creates entry + body).
+    """
+    auth = HTTPBasicAuth(username, password)
+    for ws, (name, filename) in STYLES.items():
+        sld_path = _STYLES_DIR / filename
+        if not sld_path.exists():
+            print(f"  WARNING: SLD not found: {sld_path}")
+            continue
+        requests.delete(
+            f"{base_url}/rest/workspaces/{ws}/styles/{name}?purge=true&recurse=true",
+            auth=auth, timeout=15,
+        )
+        r = requests.post(
+            f"{base_url}/rest/workspaces/{ws}/styles?name={name}",
+            auth=auth,
+            headers={"Content-Type": "application/vnd.ogc.sld+xml"},
+            data=sld_path.read_bytes(),
+            timeout=20,
+        )
+        print(f"  style '{ws}:{name}': {'OK' if r.status_code in (200, 201) else f'HTTP {r.status_code}'}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create CoRE Stack GeoServer workspaces.")
     parser.add_argument("--url", default="http://localhost:8080/geoserver")
@@ -82,6 +116,7 @@ def main() -> int:
         return 1
 
     create_workspaces(base_url, args.username, args.password)
+    create_styles(base_url, args.username, args.password)
     return 0
 
 
