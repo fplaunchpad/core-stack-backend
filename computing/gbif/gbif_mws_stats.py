@@ -124,7 +124,7 @@ def compute_mws_biodiversity(gbif_fc, mws_fc):
         leftField=".geo", rightValue=None, rightField=".geo", maxError=10
     )
     join = ee.Join.saveAll(matchesKey="gbif_occurrences")
-    joined = join.apply(primary=mws_fc, secondary=gbif_fc, condition=spatial_filter)
+    joined = join.apply(primary=mws_fc, secondary=gbif_fc, condition=spatial_filter) # Join.saveAll() joins each MWS polygon to the GBIF points inside it, preserving species identity (taxonKey) — which reduceRegions() on a rasterized image would destroy. Then each MWS is mapped to its indicator set with aggregate_count_distinct / aggregate_histogram.
 
     threatened = config.THREATENED_IUCN_CATEGORIES
 

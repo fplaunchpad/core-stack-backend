@@ -36,9 +36,9 @@ def clean_occurrences(csv_path, out_path=None):
         sep="\t",
         on_bad_lines="skip",
         usecols=lambda c: c in _USECOLS,  # tolerate columns missing in some downloads
-        low_memory=False,
+        low_memory=False, #uses more RAM (loads the whole file before inferring), but per-block GBIF downloads are only "hundreds–tens of thousands of records" 
     )
-    n0 = len(df)
+    n0 = len(df) # coubnting number of rows before cleaning (for logging)
 
     # 1. must have a real species id and coordinates
     df = df.dropna(subset=["species", "taxonKey", "decimalLatitude", "decimalLongitude"])
@@ -53,7 +53,7 @@ def clean_occurrences(csv_path, out_path=None):
 
     # 3. drop imprecise coordinates (unknown uncertainty is allowed through)
     if "coordinateUncertaintyInMeters" in df.columns:
-        unc = df["coordinateUncertaintyInMeters"]
+        unc = df["coordinateUncertaintyInMeters"] #unc - uncertainty
         df = df[unc.isna() | (unc <= config.MAX_COORD_UNCERTAINTY_M)]
 
     # 4. drop suspected country/province centroids (huge pile on one exact coordinate)

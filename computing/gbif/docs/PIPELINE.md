@@ -44,6 +44,7 @@
 ## 1. Project overview
 
 ### The problem
+
 CoRE Stack already tells planners about **water, forest, built-up, cropping, terrain, groundwater** for
 each micro-watershed. It says nothing about **biodiversity** — how many species live there, whether
 any are threatened, whether the area is ecologically rich or degraded. Planners need this to prioritise
@@ -53,6 +54,7 @@ This module adds a **biodiversity layer**: for each micro-watershed, "how specie
 what kinds of species, and are any of them threatened?"
 
 ### Why GBIF
+
 **GBIF (Global Biodiversity Information Facility)** is the world's largest free, open aggregator of
 **species-occurrence records** — one record = "this species was observed at this lat/lon on this date."
 It aggregates eBird, iNaturalist, museum specimens, herbaria, etc. For India it holds tens of millions
@@ -60,13 +62,16 @@ of records. It has a public **Download API** and requires only a free account. N
 gives comparable species coverage for free.
 
 ### Why one block at a time (block-first)
+
 A block (tehsil) is the unit CoRE Stack already computes everything else on. Processing per block means:
+
 - **Small, fast downloads** (hundreds–tens of thousands of records instead of tens of millions).
 - **Testable in minutes**, not a multi-hour national job.
 - **Independent failure/rerun** — one block failing doesn't affect others.
 - **Same trigger shape** as every other layer (`state, district, block, gee_account_id`).
 
 ### Why Google Earth Engine (GEE)
+
 Every other CoRE Stack layer computes in GEE, and the **micro-watershed polygons already live in GEE**
 as an asset. Doing the spatial work in GEE means we (a) reuse the exact MWS geometry every other layer
 uses, (b) run the heavy point-in-polygon join on Google's servers, and (c) plug into the identical
@@ -74,6 +79,7 @@ uses, (b) run the heavy point-in-polygon join on Google's servers, and (c) plug 
 CoRE Stack layer rather than a bolt-on.
 
 ### Why per-MWS indicators, not raw points
+
 Showing 20,000 raw dots on a map answers nothing for a planner. The stack is organised around the
 **micro-watershed** as the decision unit. So we **summarise** the points into per-MWS numbers
 ("this watershed has 47 species, 3 threatened") that can be compared, filtered, coloured on a
@@ -128,46 +134,46 @@ choropleth, put in a spreadsheet, and written into a report — exactly like eve
 
 **Reading every arrow** (input → output, where it runs, why):
 
-| Arrow | Input | Output | Runs where | Why this transformation |
-| --- | --- | --- | --- | --- |
-| User → API | 3 strings | HTTP request | browser → Django | the location is the only thing a user must choose |
-| API → Celery | request | queued task | Django → broker | GBIF + GEE take minutes; the request must not block |
-| Celery → GBIF | block bbox (WKT) | raw CSV | worker → GBIF | GBIF is the species data source; bbox restricts to the block |
-| GBIF → Cleaning | raw CSV | clean DataFrame | pandas (local) | raw records contain wrong/imprecise coordinates that would corrupt richness |
-| Cleaning → IUCN | clean DataFrame | + threat status | GBIF species API | SIMPLE_CSV has no threat status; it's a per-species attribute |
-| IUCN → EE upload | GeoDataFrame | ee.FeatureCollection | local → GEE | GEE can only join data that lives as an EE object |
-| EE upload → Join | points + polygons | points-per-MWS | GEE servers | assign every observation to the watershed it falls in |
-| Join → Indicators | points-per-MWS | per-MWS numbers | GEE servers | turn raw points into decision-ready statistics |
-| Indicators → Export | indicator FC | asset → GeoJSON | GEE → local | persist results + bring them to Python for publishing |
-| Export → Sync | GeoJSON | GeoServer layer + DB row | local + GeoServer | make it a queryable, drawable, catalogued layer |
-| Sync → Excel | WFS layer | spreadsheet | stats_generator | KYL + reports read Excel, not GeoServer directly |
-| Excel → KYL | sheet | filter JSON | stats_generator | dashboard filters MWS by indicator |
-| Excel → Reports | sheet | HTML sections | dpr | human-readable per-MWS and per-block narrative |
+| Arrow                | Input             | Output                   | Runs where        | Why this transformation                                                     |
+| -------------------- | ----------------- | ------------------------ | ----------------- | --------------------------------------------------------------------------- |
+| User → API          | 3 strings         | HTTP request             | browser → Django | the location is the only thing a user must choose                           |
+| API → Celery        | request           | queued task              | Django → broker  | GBIF + GEE take minutes; the request must not block                         |
+| Celery → GBIF       | block bbox (WKT)  | raw CSV                  | worker → GBIF    | GBIF is the species data source; bbox restricts to the block                |
+| GBIF → Cleaning     | raw CSV           | clean DataFrame          | pandas (local)    | raw records contain wrong/imprecise coordinates that would corrupt richness |
+| Cleaning → IUCN     | clean DataFrame   | + threat status          | GBIF species API  | SIMPLE_CSV has no threat status; it's a per-species attribute               |
+| IUCN → EE upload    | GeoDataFrame      | ee.FeatureCollection     | local → GEE      | GEE can only join data that lives as an EE object                           |
+| EE upload → Join    | points + polygons | points-per-MWS           | GEE servers       | assign every observation to the watershed it falls in                       |
+| Join → Indicators   | points-per-MWS    | per-MWS numbers          | GEE servers       | turn raw points into decision-ready statistics                              |
+| Indicators → Export | indicator FC      | asset → GeoJSON         | GEE → local      | persist results + bring them to Python for publishing                       |
+| Export → Sync       | GeoJSON           | GeoServer layer + DB row | local + GeoServer | make it a queryable, drawable, catalogued layer                             |
+| Sync → Excel        | WFS layer         | spreadsheet              | stats_generator   | KYL + reports read Excel, not GeoServer directly                            |
+| Excel → KYL         | sheet             | filter JSON              | stats_generator   | dashboard filters MWS by indicator                                          |
+| Excel → Reports     | sheet             | HTML sections            | dpr               | human-readable per-MWS and per-block narrative                              |
 
 ---
 
 ## 3. Data types through the pipeline
 
-| Stage | Input type | Output type | Concrete example |
-| --- | --- | --- | --- |
-| User input | — | 3 strings | `("bihar","jamui","jamui")` |
-| Block bbox | MWS GEE asset | WKT polygon string | `POLYGON((85.77 24.33, 86.65 24.33, …))` |
-| GBIF download | WKT + predicates | tab-separated CSV file | `occurrences_raw.csv` (21,643 rows) |
-| Cleaning | CSV path | `pandas.DataFrame` | 8,921 rows × ~12 columns |
-| IUCN enrichment | DataFrame | DataFrame (+1 column) | adds `iucnRedListCategory` = `LC/NT/VU/EN/…` |
-| To geometry | DataFrame | `geopandas.GeoDataFrame` | points with `geometry = Point(lon,lat)` |
-| EE upload | GeoDataFrame | `ee.FeatureCollection` | 8,921 `ee.Feature` points (in memory) |
-| MWS polygons | GEE asset | `ee.FeatureCollection` | 324 MultiPolygon features with `uid` |
-| Spatial join | 2 FeatureCollections | `ee.FeatureCollection` | each MWS + a list of its points |
-| Indicators | joined FC | `ee.FeatureCollection` | 324 features × ~16 scalar properties |
-| Export to asset | FC | GEE **table asset** | `…/biodiversity_jamui_jamui` |
-| getInfo | asset | Python `dict` (GeoJSON) | `{"type":"FeatureCollection","features":[…]}` |
-| Enrich | GeoJSON dict | GeoJSON dict (+3 fields) | adds `dominant_class`, `biodiversity_category`, `observation_density_per_km2` |
-| DB register | GeoJSON + meta | `Layer` row (+`Layer.misc`) | one row, keyed on state/district/block |
-| GeoServer sync | GeoJSON | vector layer (WFS/WMS) | `biodiversity:jamui_jamui_biodiversity` |
-| Excel | WFS GeoJSON | `.xlsx` sheet | `biodiversity` sheet, 18 columns |
-| KYL | Excel sheet | JSON per MWS | 7 keys per `uid` |
-| Reports | Excel sheet | HTML context | narrative + tables |
+| Stage           | Input type           | Output type                     | Concrete example                                                                   |
+| --------------- | -------------------- | ------------------------------- | ---------------------------------------------------------------------------------- |
+| User input      | —                   | 3 strings                       | `("bihar","jamui","jamui")`                                                      |
+| Block bbox      | MWS GEE asset        | WKT polygon string              | `POLYGON((85.77 24.33, 86.65 24.33, …))`                                        |
+| GBIF download   | WKT + predicates     | tab-separated CSV file          | `occurrences_raw.csv` (21,643 rows)                                              |
+| Cleaning        | CSV path             | `pandas.DataFrame`            | 8,921 rows × ~12 columns                                                          |
+| IUCN enrichment | DataFrame            | DataFrame (+1 column)           | adds`iucnRedListCategory` = `LC/NT/VU/EN/…`                                   |
+| To geometry     | DataFrame            | `geopandas.GeoDataFrame`      | points with`geometry = Point(lon,lat)`                                           |
+| EE upload       | GeoDataFrame         | `ee.FeatureCollection`        | 8,921`ee.Feature` points (in memory)                                             |
+| MWS polygons    | GEE asset            | `ee.FeatureCollection`        | 324 MultiPolygon features with`uid`                                              |
+| Spatial join    | 2 FeatureCollections | `ee.FeatureCollection`        | each MWS + a list of its points                                                    |
+| Indicators      | joined FC            | `ee.FeatureCollection`        | 324 features × ~16 scalar properties                                              |
+| Export to asset | FC                   | GEE**table asset**        | `…/biodiversity_jamui_jamui`                                                    |
+| getInfo         | asset                | Python`dict` (GeoJSON)        | `{"type":"FeatureCollection","features":[…]}`                                   |
+| Enrich          | GeoJSON dict         | GeoJSON dict (+3 fields)        | adds`dominant_class`, `biodiversity_category`, `observation_density_per_km2` |
+| DB register     | GeoJSON + meta       | `Layer` row (+`Layer.misc`) | one row, keyed on state/district/block                                             |
+| GeoServer sync  | GeoJSON              | vector layer (WFS/WMS)          | `biodiversity:jamui_jamui_biodiversity`                                          |
+| Excel           | WFS GeoJSON          | `.xlsx` sheet                 | `biodiversity` sheet, 18 columns                                                 |
+| KYL             | Excel sheet          | JSON per MWS                    | 7 keys per`uid`                                                                  |
+| Reports         | Excel sheet          | HTML context                    | narrative + tables                                                                 |
 
 The through-line: **points (many rows) → per-MWS rows (324) → one map layer + one sheet + filters + report**.
 
@@ -208,6 +214,7 @@ the search endpoint caps at 100k records and isn't citable; the Download API has
 citable **DOI**.
 
 **The request (predicates):**
+
 ```
 hasCoordinate      = TRUE          # must have lat/lon
 hasGeospatialIssue = FALSE         # GBIF's own coarse geo-sanity flag
@@ -216,10 +223,12 @@ basisOfRecord in [HUMAN_OBSERVATION, PRESERVED_SPECIMEN, MACHINE_OBSERVATION, OB
 geometry within POLYGON((...block bbox...))
 format = SIMPLE_CSV
 ```
+
 It's asynchronous: we submit → GBIF prepares a zip → we poll `download_meta(key)` until `SUCCEEDED` →
 `download_get` → unzip → a single tab-separated CSV.
 
 **Example response (one row, abbreviated):**
+
 ```
 gbifID    taxonKey  species                 kingdom  class  decimalLatitude decimalLongitude basisOfRecord      ...
 39...     2493145   Acrocephalus dumetorum  Animalia Aves   24.71           86.12            HUMAN_OBSERVATION  ...
@@ -227,17 +236,17 @@ gbifID    taxonKey  species                 kingdom  class  decimalLatitude deci
 
 **Fields we use from SIMPLE_CSV, and why:**
 
-| Field | Why it's needed |
-| --- | --- |
-| `taxonKey` | GBIF's stable species id — **the** key for all distinct-species counts (richness, taxonomy, threatened). Two records with the same `taxonKey` are the same species. |
-| `species` | human-readable name (display / debugging) |
-| `kingdom` | plant vs animal grouping → drives `plant_species_count` (kingdom = Plantae) |
-| `class` | Aves / Mammalia / Reptilia / Amphibia / Insecta → the per-class taxonomy counts |
-| `decimalLatitude`, `decimalLongitude` | the point location → used to build geometry for the spatial join |
-| `coordinateUncertaintyInMeters` | cleaning: drop points too imprecise for MWS-scale work |
-| `basisOfRecord` | keep genuine observations/specimens (already filtered in the predicate) |
-| `stateProvince` | context/QA (Indian state) |
-| `year` | provenance / potential future temporal use |
+| Field                                     | Why it's needed                                                                                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `taxonKey`                              | GBIF's stable species id —**the** key for all distinct-species counts (richness, taxonomy, threatened). Two records with the same `taxonKey` are the same species. |
+| `species`                               | human-readable name (display / debugging)                                                                                                                                   |
+| `kingdom`                               | plant vs animal grouping → drives`plant_species_count` (kingdom = Plantae)                                                                                               |
+| `class`                                 | Aves / Mammalia / Reptilia / Amphibia / Insecta → the per-class taxonomy counts                                                                                            |
+| `decimalLatitude`, `decimalLongitude` | the point location → used to build geometry for the spatial join                                                                                                           |
+| `coordinateUncertaintyInMeters`         | cleaning: drop points too imprecise for MWS-scale work                                                                                                                      |
+| `basisOfRecord`                         | keep genuine observations/specimens (already filtered in the predicate)                                                                                                     |
+| `stateProvince`                         | context/QA (Indian state)                                                                                                                                                   |
+| `year`                                  | provenance / potential future temporal use                                                                                                                                  |
 
 **Fields present but *not* used:** `order`, `family`, `genus`, `phylum` — GBIF populates `class` and
 `kingdom` reliably; lower ranks (order/family/genus) have higher null rates, so we intentionally do
@@ -258,15 +267,16 @@ cleaning is not optional. Five filters run in order (all in pandas, fast, local)
 from the real Jamui pilot (**21,643 → 8,921**, ~59% dropped — high because the birds pilot had many
 duplicate eBird checklists).
 
-| # | Filter | Why it exists | If skipped |
-| --- | --- | --- | --- |
-| 1 | **drop rows missing** `species` / `taxonKey` / `lat` / `lon` | can't count or place a record with no id or location | crashes / meaningless "species" |
-| 2 | **inside India bbox & not (0,0)** | (0,0) and out-of-country points are data-entry errors | phantom species appear in wrong watersheds |
-| 3 | **coordinate uncertainty ≤ 10 km** (unknown allowed) | a point known only to ±50 km can't be assigned to a ~km-scale MWS | points land in the wrong MWS → wrong richness |
-| 4 | **drop "centroid piles"** (>1000 records on one exact coordinate) | a giant pile on one coordinate = a country/province centroid, not a real spot | one fake hotspot dominates a watershed |
-| 5 | **de-duplicate** identical `(species, lat, lon)` | the same species repeatedly logged at the same spot inflates counts | occurrence_count and evenness skewed |
+| # | Filter                                                                     | Why it exists                                                                 | If skipped                                     |
+| - | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------- |
+| 1 | **drop rows missing** `species` / `taxonKey` / `lat` / `lon` | can't count or place a record with no id or location                          | crashes / meaningless "species"                |
+| 2 | **inside India bbox & not (0,0)**                                    | (0,0) and out-of-country points are data-entry errors                         | phantom species appear in wrong watersheds     |
+| 3 | **coordinate uncertainty ≤ 10 km** (unknown allowed)                | a point known only to ±50 km can't be assigned to a ~km-scale MWS            | points land in the wrong MWS → wrong richness |
+| 4 | **drop "centroid piles"** (>1000 records on one exact coordinate)    | a giant pile on one coordinate = a country/province centroid, not a real spot | one fake hotspot dominates a watershed         |
+| 5 | **de-duplicate** identical `(species, lat, lon)`                   | the same species repeatedly logged at the same spot inflates counts           | occurrence_count and evenness skewed           |
 
 **Before → after (illustrative):**
+
 ```
 BEFORE (raw)                                   AFTER (clean)
 taxonKey lat      lon      uncert  species     taxonKey lat     lon     species
@@ -275,6 +285,7 @@ taxonKey lat      lon      uncert  species     taxonKey lat     lon     species
 2493145  24.71    86.12    120     Blyth's...   ...     (exact duplicate dropped)
 9999     24.7     86.1     80000   (uncertain)  ...     (>10km uncertainty dropped)
 ```
+
 Output: a clean `DataFrame` where every row is a trustworthy "species X at (lat,lon)".
 
 ---
@@ -289,6 +300,7 @@ assumed it did — it doesn't; verified on real downloads.)
 *species*. GBIF serves it from its **species API**, not the occurrence CSV.
 
 **How enrichment works** (`gbif_iucn.py`):
+
 1. Take the **distinct** `taxonKey`s in the cleaned data (240 in the Jamui pilot).
 2. For each, call `GET https://api.gbif.org/v1/species/{taxonKey}/iucnRedListCategory`.
 3. Normalise the long-form answer to the standard short code:
@@ -318,9 +330,11 @@ upload path.
 
 **What we upload (properties per point):** deliberately **only the four fields the indicators need**,
 NaN-free and typed:
+
 ```
 taxonKey (string)  kingdom (string)  class (string)  iucnRedListCategory (string)
 ```
+
 We do *not* upload lat/lon as properties (they're already the geometry) or uncertainty/year (unused
 downstream) — a smaller payload and no serialization surprises.
 
@@ -375,6 +389,7 @@ and we can compute statistics on exactly those points.
   clean scalar indicators — not the internal point list (which can't be exported to a table).
 
 ### Why a join, not rasterization
+
 The obvious alternative is "paint points onto a raster grid, then `reduceRegions`" (how LULC-style
 layers work). **That destroys species identity.** Once you rasterise, a pixel just says "2 records
 here" — you can never recover "how many *distinct* species". Species **richness = count of distinct
@@ -392,48 +407,56 @@ All indicators below are computed **per MWS**. Groups 1–4 run **server-side in
 Worked numbers are the real Jamui MWS `12_312011` (18 records, 16 species, all birds).
 
 ### 10.1 Species Richness
+
 - **Definition:** number of distinct species recorded in the MWS.
 - **Formula:** count of distinct `taxonKey`.
 - **EE:** `occurrences.aggregate_count_distinct("taxonKey")`
 - **Example:** `16`. **Type:** Integer ≥ 0.
 
 ### 10.2 Occurrence Count
+
 - **Definition:** total observation records in the MWS (survey effort).
 - **Formula:** count of records.
 - **EE:** `occurrences.size()`
 - **Example:** `18`. **Type:** Integer ≥ 0. *Always shown next to richness — see §19.*
 
 ### 10.3 Shannon Diversity Index
+
 - **Definition:** richness **and** evenness combined; higher = more diverse and even.
 - **Formula:** `H = −Σ pᵢ · ln(pᵢ)`  (0 if N ≤ 1).
 - **EE:** histogram → proportions → `−Σ p·ln(p)`, guarded by `ee.Algorithms.If(n>1, …, 0)`.
 - **Example:** `2.736`. **Type:** Float (stored formatted to 3 dp).
 
 ### 10.4 Simpson Diversity Index
+
 - **Definition:** probability two random records are *different* species (0–1; intuitive).
 - **Formula:** `D = 1 − Σ pᵢ²`.
 - **EE:** reuses the same histogram: `1 − Σ p²`.
 - **Example:** `0.932`. **Type:** Float.
 
 ### 10.5 Pielou Evenness
+
 - **Definition:** how evenly records spread across species (0 = one dominates, 1 = perfectly even).
 - **Formula:** `J = H / ln(S)`  (0 if S ≤ 1).
 - **EE:** `shannon / log(richness)`, guarded.
 - **Example:** `0.987`. **Type:** Float.
 
 ### 10.6 Rare Species Count
+
 - **Definition:** species seen exactly once (singletons); a data-reliability signal.
 - **Formula:** count of histogram bins equal to 1.
 - **EE:** `histogram.values().map(c → c==1).reduce(sum)`.
 - **Example:** `14`. **Type:** Integer.
 
 ### 10.7 Threatened Species Count
+
 - **Definition:** distinct species classified IUCN **VU / EN / CR**.
 - **Formula:** distinct `taxonKey` where `iucnRedListCategory ∈ {VU,EN,CR}`.
 - **EE:** `occurrences.filter(inList(iucnRedListCategory,[VU,EN,CR])).aggregate_count_distinct("taxonKey")`.
 - **Example:** `2`. **Type:** Integer. *Depends on §7 enrichment.*
 
 ### 10.8–10.13 Taxonomy counts (bird / mammal / reptile / amphibian / insect / plant)
+
 - **Definition:** distinct species within each taxonomic group.
 - **Formula:** distinct `taxonKey` after filtering by `class` (or `kingdom` for plants).
 - **EE:** e.g. `occurrences.filter(ee.Filter.eq("class","Aves")).aggregate_count_distinct("taxonKey")`.
@@ -441,24 +464,28 @@ Worked numbers are the real Jamui MWS `12_312011` (18 records, 16 species, all b
 - **Example:** `bird_species_count = 16`, others `0` (birds-only pilot). **Type:** Integer each.
 
 ### 10.14 Data Poor flag
+
 - **Definition:** `True` if the MWS has fewer than 20 records — "cannot assess", not "no biodiversity".
 - **Formula:** `occurrence_count < 20`.
 - **EE:** `n.lt(20)` (stored as 0/1).
 - **Example:** `1` (18 < 20). **Type:** Boolean/int.
 
 ### 10.15 Dominant Taxonomic Class  *(derived, local)*
+
 - **Definition:** the taxonomic group with the most species in the MWS.
 - **Formula:** argmax over the six per-class counts (0 → `"Unknown"`).
 - **Where:** Python, after `getInfo`.
 - **Example:** `"Aves"`. **Type:** String.
 
 ### 10.16 Biodiversity Category  *(derived, local)*
+
 - **Definition:** plain-language band of richness.
 - **Formula:** `<10 Very Low · <25 Low · <50 Moderate · <100 High · else Very High`.
 - **Where:** Python.
 - **Example:** richness 16 → `"Low"`. **Type:** String.
 
 ### 10.17 Observation Density (per km²)  *(derived, local)*
+
 - **Definition:** records per km² — normalises effort for watershed size.
 - **Formula:** `occurrence_count / (area_in_ha / 100)`  (null if area unavailable).
 - **Where:** Python (uses the MWS `area_in_ha` carried through the join).
@@ -469,6 +496,7 @@ Worked numbers are the real Jamui MWS `12_312011` (18 records, 16 species, all b
 ## 11. Earth Engine computation flow
 
 **Server-side (runs on Google's servers, lazily):**
+
 1. Load MWS polygons: `ee.FeatureCollection(<filtered_mws asset>)`.
 2. Build the points FC in memory and hand it to GEE.
 3. `ee.Join.saveAll` — attach each MWS's contained points.
@@ -518,20 +546,22 @@ consumable exactly like every other vector layer. (An earlier version exported t
 
 Four existing CoRE Stack objects; **no new models** were introduced.
 
-| Object | Role for biodiversity |
-| --- | --- |
-| **`Dataset`** | one seed row `"Biodiversity Occurrence"` (layer_type `vector`, workspace `biodiversity`). Defines the *type* of layer. |
-| **`Layer`** | one row per block: links to the `Dataset`, stores `layer_name`, `gee_asset_path`, `algorithm`, sync flags, and **`Layer.misc`**. Created by `save_layer_info_to_db`. |
-| **`Layer.misc`** | small JSON of GBIF provenance that can't be derived elsewhere (see §17). Matches the repo convention (change_detection stores `start_year/end_year` here). |
-| **`LayerInfo`** | registry row (in `stats_generator`) that tells the Excel/KYL step to generate a sheet for this layer. Admin/seed-managed like every other vector layer. |
+| Object                   | Role for biodiversity                                                                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`Dataset`**    | one seed row`"Biodiversity Occurrence"` (layer_type `vector`, workspace `biodiversity`). Defines the *type* of layer.                                                         |
+| **`Layer`**      | one row per block: links to the`Dataset`, stores `layer_name`, `gee_asset_path`, `algorithm`, sync flags, and **`Layer.misc`**. Created by `save_layer_info_to_db`. |
+| **`Layer.misc`** | small JSON of GBIF provenance that can't be derived elsewhere (see §17). Matches the repo convention (change_detection stores`start_year/end_year` here).                          |
+| **`LayerInfo`**  | registry row (in`stats_generator`) that tells the Excel/KYL step to generate a sheet for this layer. Admin/seed-managed like every other vector layer.                              |
 
 **Synchronisation** (inline in the task, mirroring `change_detection_vector`):
+
 ```
 save_layer_info_to_db(..., dataset_name="Biodiversity Occurrence", misc={…})   # DB row
 make_asset_public(asset_id)                                                    # asset visibility
 res = sync_layer_to_geoserver(state, geojson, layer_name, "biodiversity")      # publish vector
 if res["status_code"] == 201: update_layer_sync_status(layer_id, sync_to_geoserver=True)
 ```
+
 **Why reuse:** these helpers already handle GeoServer auth, shapefile packaging, DB versioning, and the
 prod/remote split. Re-implementing any of it would be duplicate, divergent infrastructure.
 
@@ -540,22 +570,21 @@ prod/remote split. Re-implementing any of it would be duplicate, divergent infra
 ## 14. Excel generation
 
 The Excel sheet is the bridge between GeoServer and KYL/reports (they read Excel, not GeoServer).
-`create_excel_for_biodiversity` (in `stats_generator/utils.py`, dispatched when `workspace ==
-"biodiversity"`) flattens the layer's per-MWS properties into the **`biodiversity`** sheet:
+`create_excel_for_biodiversity` (in `stats_generator/utils.py`, dispatched when `workspace == "biodiversity"`) flattens the layer's per-MWS properties into the **`biodiversity`** sheet:
 
-| Column | Source | Why |
-| --- | --- | --- |
-| `UID` | MWS uid | join key for KYL/reports |
-| `species_richness` | GEE | primary metric |
-| `occurrence_count` | GEE | survey effort |
-| `threatened_species_count` | GEE (IUCN) | conservation signal |
-| `rare_species_count` | GEE | reliability caveat |
-| `shannon_diversity_index` / `simpson_diversity_index` / `pielou_evenness` | GEE | ecological depth |
-| `bird_/mammal_/plant_/reptile_/amphibian_/insect_species_count` | GEE | taxonomy breakdown |
-| `dominant_class` | local | one-word character |
-| `biodiversity_category` | local | plain-language band |
-| `observation_density_per_km2` | local | effort normalised by area |
-| `data_poor` | GEE | quality flag |
+| Column                                                                          | Source     | Why                       |
+| ------------------------------------------------------------------------------- | ---------- | ------------------------- |
+| `UID`                                                                         | MWS uid    | join key for KYL/reports  |
+| `species_richness`                                                            | GEE        | primary metric            |
+| `occurrence_count`                                                            | GEE        | survey effort             |
+| `threatened_species_count`                                                    | GEE (IUCN) | conservation signal       |
+| `rare_species_count`                                                          | GEE        | reliability caveat        |
+| `shannon_diversity_index` / `simpson_diversity_index` / `pielou_evenness` | GEE        | ecological depth          |
+| `bird_/mammal_/plant_/reptile_/amphibian_/insect_species_count`               | GEE        | taxonomy breakdown        |
+| `dominant_class`                                                              | local      | one-word character        |
+| `biodiversity_category`                                                       | local      | plain-language band       |
+| `observation_density_per_km2`                                                 | local      | effort normalised by area |
+| `data_poor`                                                                   | GEE        | quality flag              |
 
 ---
 
@@ -563,10 +592,12 @@ The Excel sheet is the bridge between GeoServer and KYL/reports (they read Excel
 
 **KYL** ("Know Your Landscape") is the dashboard filter layer. `stats_generator/mws_indicators.py`
 reads the `biodiversity` sheet per MWS and emits these keys into the KYL JSON:
+
 ```
 species_richness, occurrence_count, threatened_species_count,
 shannon_diversity_index, dominant_taxon_group, biodiversity_category, biodiversity_data_poor
 ```
+
 **Filtering:** the frontend discovers these keys and lets a user filter watersheds (e.g. "show MWS with
 ≥1 threatened species", "biodiversity_category = High"). **Colouring:** a chosen key drives the choropleth
 — each MWS polygon is shaded by its value (e.g. richness) via the GeoServer style, so the map reads as a
@@ -592,6 +623,7 @@ Both always pair richness with survey effort and a caveat that GBIF absence ≠ 
 ## 17. Final outputs
 
 **Per-MWS GeoJSON feature (published to GeoServer):**
+
 ```json
 { "type":"Feature", "geometry": {"type":"MultiPolygon","coordinates":[...]},
   "properties": {
@@ -606,11 +638,13 @@ Both always pair richness with survey effort and a caveat that GBIF absence ≠ 
 ```
 
 **`Layer.misc` (provenance — one per block):**
+
 ```json
 { "gbif_doi":"10.15468/dl.xxxxxxx", "download_key":"0009612-260623161305970",
   "taxon_scope":"all", "raw_record_count":21643, "clean_record_count":8921,
   "download_date":"2026-07-02" }
 ```
+
 - `gbif_doi` — required GBIF citation. `download_key` — re-fetch/debug handle. `taxon_scope` — qualifies
   what the numbers mean. `raw_/clean_record_count` — data-quality (drop rate). `download_date` — data vintage.
 
@@ -665,39 +699,39 @@ Both always pair richness with survey effort and a caveat that GBIF absence ≠ 
 
 ## 19. Why we chose this architecture
 
-| Decision | Why |
-| --- | --- |
-| **No rasterization** | rasterising points destroys species identity → distinct-species richness becomes impossible. The join keeps `taxonKey`. |
-| **FeatureCollections (not images)** | species data is inherently point/vector; the MWS units are polygons; a FC↔FC join is the correct primitive and preserves per-record attributes. |
-| **Block-first** | small/fast/testable downloads, independent reruns, and the same trigger shape as every other layer. |
-| **Earth Engine** | the MWS polygons already live in GEE; the heavy join runs on Google's servers; and it plugs into the existing export→GeoServer→Excel→reports chain. |
-| **`Layer.misc` for provenance** | the repo's established slot for "qualifying parameters that aren't columns" (change_detection stores years there). Minimal, flat, non-duplicative. |
-| **Reuse Change Detection's flow** | it already solved export→getInfo→GeoServer→register for a per-MWS vector layer; copying it makes biodiversity a native peer. |
-| **No `GBIFBlockDownload` model** | no GEE layer uses a status model; `Layer` + `is_gee_asset_exists` already provide idempotency + registration. Adding one would be a new, divergent pattern. |
-| **No custom GeoServer pipeline** | `sync_layer_to_geoserver` handles auth/packaging/prod-split already. |
-| **No custom GCS upload pipeline** | `gdf_to_ee_fc` gets points into GEE in one call (as plantation/nrega do); the bespoke GCS→CLI→asset subsystem was removed. |
-| **IUCN enrichment as a separate step** | the threat category isn't in the occurrence CSV; it's a per-species attribute fetched (and cached) from the species API. |
-| **All-taxa (no taxon filter)** | richness and per-class taxonomy only make sense over all taxa; filtering to one species would make most indicators meaningless. |
-| **Always carry occurrence_count + data_poor** | GBIF is opportunistic — "low richness" often means "under-surveyed". Effort and the data-poor flag prevent misreading. |
+| Decision                                            | Why                                                                                                                                                            |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **No rasterization**                          | rasterising points destroys species identity → distinct-species richness becomes impossible. The join keeps`taxonKey`.                                      |
+| **FeatureCollections (not images)**           | species data is inherently point/vector; the MWS units are polygons; a FC↔FC join is the correct primitive and preserves per-record attributes.               |
+| **Block-first**                               | small/fast/testable downloads, independent reruns, and the same trigger shape as every other layer.                                                            |
+| **Earth Engine**                              | the MWS polygons already live in GEE; the heavy join runs on Google's servers; and it plugs into the existing export→GeoServer→Excel→reports chain.         |
+| **`Layer.misc` for provenance**             | the repo's established slot for "qualifying parameters that aren't columns" (change_detection stores years there). Minimal, flat, non-duplicative.             |
+| **Reuse Change Detection's flow**             | it already solved export→getInfo→GeoServer→register for a per-MWS vector layer; copying it makes biodiversity a native peer.                                |
+| **No `GBIFBlockDownload` model**            | no GEE layer uses a status model;`Layer` + `is_gee_asset_exists` already provide idempotency + registration. Adding one would be a new, divergent pattern. |
+| **No custom GeoServer pipeline**              | `sync_layer_to_geoserver` handles auth/packaging/prod-split already.                                                                                         |
+| **No custom GCS upload pipeline**             | `gdf_to_ee_fc` gets points into GEE in one call (as plantation/nrega do); the bespoke GCS→CLI→asset subsystem was removed.                                 |
+| **IUCN enrichment as a separate step**        | the threat category isn't in the occurrence CSV; it's a per-species attribute fetched (and cached) from the species API.                                       |
+| **All-taxa (no taxon filter)**                | richness and per-class taxonomy only make sense over all taxa; filtering to one species would make most indicators meaningless.                                |
+| **Always carry occurrence_count + data_poor** | GBIF is opportunistic — "low richness" often means "under-surveyed". Effort and the data-poor flag prevent misreading.                                        |
 
 ---
 
 ## 20. Repository mapping
 
-| Pipeline stage | File | Responsibility |
-| --- | --- | --- |
-| Orchestration | `computing/gbif/biodiversity_task.py` | the Celery task; runs every stage; idempotency guard; registration + sync; builds `Layer.misc` |
-| Download | `computing/gbif/gbif_download.py` | block bbox from MWS asset; GBIF Download API; poll/fetch/unzip; provenance |
-| Cleaning | `computing/gbif/gbif_clean.py` | the 5 coordinate-cleaning filters |
-| IUCN | `computing/gbif/gbif_iucn.py` | per-species IUCN category lookup (cached) + short-code normalisation |
-| Indicators | `computing/gbif/gbif_mws_stats.py` | MWS load, `Join.saveAll`, per-MWS indicators, export-to-asset |
-| Local enrichment | `computing/gbif/gbif_export.py` | `dominant_class` / `biodiversity_category` / `observation_density` + NaN-fill |
-| Config | `computing/gbif/config.py` | thresholds, IUCN categories, basis-of-record, dataset names, asset-id helper |
-| API + route | `computing/api.py`, `computing/urls.py` | `generate_biodiversity_layer` endpoint |
-| Excel | `stats_generator/utils.py` | `create_excel_for_biodiversity` + `workspace=="biodiversity"` dispatch |
-| KYL | `stats_generator/mws_indicators.py` | 7 biodiversity keys per MWS |
-| Reports | `dpr/gen_mws_report.py`, `dpr/gen_tehsil_report.py`, `dpr/api.py`, `templates/*.html` | report sections |
-| Registry | `installation/seed/seed_data.json` | `Dataset` seed row |
+| Pipeline stage   | File                                                                                          | Responsibility                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Orchestration    | `computing/gbif/biodiversity_task.py`                                                       | the Celery task; runs every stage; idempotency guard; registration + sync; builds`Layer.misc` |
+| Download         | `computing/gbif/gbif_download.py`                                                           | block bbox from MWS asset; GBIF Download API; poll/fetch/unzip; provenance                      |
+| Cleaning         | `computing/gbif/gbif_clean.py`                                                              | the 5 coordinate-cleaning filters                                                               |
+| IUCN             | `computing/gbif/gbif_iucn.py`                                                               | per-species IUCN category lookup (cached) + short-code normalisation                            |
+| Indicators       | `computing/gbif/gbif_mws_stats.py`                                                          | MWS load,`Join.saveAll`, per-MWS indicators, export-to-asset                                  |
+| Local enrichment | `computing/gbif/gbif_export.py`                                                             | `dominant_class` / `biodiversity_category` / `observation_density` + NaN-fill             |
+| Config           | `computing/gbif/config.py`                                                                  | thresholds, IUCN categories, basis-of-record, dataset names, asset-id helper                    |
+| API + route      | `computing/api.py`, `computing/urls.py`                                                   | `generate_biodiversity_layer` endpoint                                                        |
+| Excel            | `stats_generator/utils.py`                                                                  | `create_excel_for_biodiversity` + `workspace=="biodiversity"` dispatch                      |
+| KYL              | `stats_generator/mws_indicators.py`                                                         | 7 biodiversity keys per MWS                                                                     |
+| Reports          | `dpr/gen_mws_report.py`, `dpr/gen_tehsil_report.py`, `dpr/api.py`, `templates/*.html` | report sections                                                                                 |
+| Registry         | `installation/seed/seed_data.json`                                                          | `Dataset` seed row                                                                            |
 
 **Reused CoRE Stack helpers (not reimplemented):** `ee_initialize`, `get_gee_asset_path`,
 `valid_gee_text`, `gdf_to_ee_fc`, `export_vector_asset_to_gee`, `check_task_status`,
@@ -731,8 +765,7 @@ all-taxa run would show more taxa and higher plant/insect counts.)*
     waits (~1–3 min) until it's materialised.
 11. **Read back:** `getInfo` → a GeoJSON dict of **324** features (~8 MB); `enrich_and_clean` adds
     `dominant_class="Aves"`, `biodiversity_category="Low"`, `observation_density_per_km2`, coerces floats.
-12. **Register + publish:** `save_layer_info_to_db(dataset="Biodiversity Occurrence", misc={doi, key,
-    taxon_scope:"all", raw:21643, clean:8921, date})` → a `Layer` row; `make_asset_public`;
+12. **Register + publish:** `save_layer_info_to_db(dataset="Biodiversity Occurrence", misc={doi, key, taxon_scope:"all", raw:21643, clean:8921, date})` → a `Layer` row; `make_asset_public`;
     `sync_layer_to_geoserver` → `biodiversity:jamui_jamui_biodiversity`; sync flag set.
 13. **Downstream (separate triggers):** the stats step writes the `biodiversity` Excel sheet → KYL emits
     the 7 filter keys → the MWS/tehsil reports render their Biodiversity sections.
@@ -748,6 +781,7 @@ same infrastructure, and readable the same way, as every other CoRE Stack layer.
 ---
 
 ### Appendix — current status & known caveats (for honesty)
+
 - **Validated live:** GBIF auth, download, cleaning, IUCN enrichment, and the full GEE join + indicators
   + export + getInfo, on the real 324-MWS Jamui block (birds subset).
 - **Pending:** one full **all-taxa** production run end-to-end; the `biodiversity` **`LayerInfo`** registry

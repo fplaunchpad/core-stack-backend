@@ -561,7 +561,7 @@ def move_asset_to_another_folder(src_folder, dest_folder):
 def make_asset_public(asset_id):
     try:
         # Get the ACL of the asset
-        acl = ee.data.getAssetAcl(asset_id)
+        acl = ee.data.getAssetAcl(asset_id) #acl - access control list
 
         # Add 'all_users' to readers
         acl["all_users_can_read"] = True

@@ -23,6 +23,7 @@ from utilities.gee_utils import (
     check_task_status,
     make_asset_public,
     is_gee_asset_exists,
+    valid_gee_text,
 )
 from computing.utils import (
     save_layer_info_to_db,
@@ -53,7 +54,7 @@ def generate_biodiversity_block(self, state, district, block, gee_account_id):
     ee_initialize(gee_account_id)
 
     # 1. download (cached) — provenance kept for Layer.misc
-    raw_csv, meta = download_block_occurrences(state, district, block)
+    raw_csv, meta = download_block_occurrences(state, district, block) #from gbif_download.py
 
     # 2. clean + IUCN enrichment (iucnRedListCategory is not in SIMPLE_CSV; looked up per species)
     df = clean_occurrences(raw_csv, None)
@@ -77,14 +78,16 @@ def generate_biodiversity_block(self, state, district, block, gee_account_id):
         )
         gbif_fc = gdf_to_ee_fc(gdf)
         mws_fc = load_mws_featurecollection(state, district, block)
-        stats_fc = compute_mws_biodiversity(gbif_fc, mws_fc)
+        stats_fc = compute_mws_biodiversity(gbif_fc, mws_fc) # calling fucntion to joiun thr both mws and biofiversity data
         task_id, asset_id = export_stats_to_asset(state, district, block, stats_fc)
         check_task_status([task_id])
 
     # 5. register in DB + publish to GeoServer via the shared helper.
     #    sync_fc_to_geoserver reads the asset, writes a GeoPackage (full field names, unlike a
     #    shapefile), publishes the layer, and applies the biodiversity_mws style.
-    layer_name = f"{district}_{block}_biodiversity"
+    layer_name = (
+        f"{valid_gee_text(district.lower())}_{valid_gee_text(block.lower())}_biodiversity"
+    )
     # GBIF provenance that cannot be derived from Layer/Dataset/LayerInfo (matches the repo's
     # convention of storing only qualifying parameters in Layer.misc, e.g. change_detection's years).
     misc = {
@@ -95,7 +98,7 @@ def generate_biodiversity_block(self, state, district, block, gee_account_id):
         "clean_record_count": int(len(df)),
         "download_date": meta.get("download_date"),
     }
-    layer_id = save_layer_info_to_db(
+    layer_id = save_layer_info_to_db( # savind data to local db for future reference (Layer table)
         state,
         district,
         block,
@@ -106,8 +109,8 @@ def generate_biodiversity_block(self, state, district, block, gee_account_id):
         algorithm_version=config.ALGORITHM_VERSION,
         misc=misc,
     )
-    make_asset_public(asset_id)
-    res = sync_fc_to_geoserver(
+    make_asset_public(asset_id) # makind the asste public so that it can be accessed by anyone (no authentication required)
+    res = sync_fc_to_geoserver( #synching the data to geoserver so that it can be accessed via WMS/WFS
         ee.FeatureCollection(asset_id),
         state,
         layer_name,

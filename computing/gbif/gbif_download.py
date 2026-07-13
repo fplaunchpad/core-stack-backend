@@ -60,13 +60,13 @@ def request_block_download(bbox_wkt):
     pygbif 0.6.6.
     """
     predicates = [
-        "hasCoordinate = TRUE",
-        "hasGeospatialIssue = FALSE",
-        "occurrenceStatus = PRESENT",
+        "hasCoordinate = TRUE", #data should have proper corrdinate
+        "hasGeospatialIssue = FALSE", # if some species of land located in water then removed
+        "occurrenceStatus = PRESENT", # only include present occurrences
         "basisOfRecord in " + json.dumps(config.KEEP_BASIS_OF_RECORD),
-        f"geometry within {bbox_wkt}",
+        f"geometry within {bbox_wkt}", # the coordinates withing the given polygon 
     ]
-    key = occ.download(
+    key = occ.download( 
         queries=predicates,
         format="SIMPLE_CSV",
         user=config.GBIF_USER,
@@ -101,7 +101,7 @@ def _read_meta(meta_path):
     if os.path.exists(meta_path):
         for line in open(meta_path):
             if "=" in line:
-                k, v = line.strip().split("=", 1)
+                k, v = line.strip().split("=", 1) #k-key = v-value
                 meta[k] = v or None
     if "raw_record_count" in meta and meta["raw_record_count"] is not None:
         try:
@@ -129,7 +129,7 @@ def download_block_occurrences(state, district, block):
         raise RuntimeError("GBIF_USER / GBIF_PWD / GBIF_EMAIL must be set.")
 
     os.makedirs(block_dir, exist_ok=True)
-    bbox_wkt = get_block_bbox_wkt(state, district, block)
+    bbox_wkt = get_block_bbox_wkt(state, district, block) #getting ploygons from EE
     print(f"[gbif] block bbox: {bbox_wkt}")
     key = request_block_download(bbox_wkt)
     csv_path = wait_and_fetch(key, block_dir)
