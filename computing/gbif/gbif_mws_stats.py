@@ -27,14 +27,15 @@ from . import config
 
 logger = logging.getLogger(__name__)
 
-# class/kingdom filters -> exported property name
+# class/kingdom filters -> exported property name. Values are lists matched with inList: the GBIF
+# Backbone has no class "Reptilia"; reptiles are filed under Squamata, Testudines and Crocodylia.
 _TAXON_FILTERS = [
-    ("bird_species_count", "class", "Aves"),
-    ("mammal_species_count", "class", "Mammalia"),
-    ("reptile_species_count", "class", "Reptilia"),
-    ("amphibian_species_count", "class", "Amphibia"),
-    ("insect_species_count", "class", "Insecta"),
-    ("plant_species_count", "kingdom", "Plantae"),
+    ("bird_species_count", "class", ["Aves"]),
+    ("mammal_species_count", "class", ["Mammalia"]),
+    ("reptile_species_count", "class", ["Squamata", "Testudines", "Crocodylia"]),
+    ("amphibian_species_count", "class", ["Amphibia"]),
+    ("insect_species_count", "class", ["Insecta"]),
+    ("plant_species_count", "kingdom", ["Plantae"]),
 ]
 
 # Explicit, static output schema for the exported table (drops the join's List<Feature> and any
@@ -189,9 +190,9 @@ def compute_mws_biodiversity(gbif_fc, mws_fc):
         # per-class taxonomy counts
         tax = {
             name: ee.Number(
-                occ.filter(ee.Filter.eq(field, value)).aggregate_count_distinct("taxonKey")
+                occ.filter(ee.Filter.inList(field, values)).aggregate_count_distinct("taxonKey")
             ).toInt()
-            for name, field, value in _TAXON_FILTERS
+            for name, field, values in _TAXON_FILTERS
         }
         # dominant_class = argmax over the six class counts (Unknown if all zero) — server-side
         dom_names = ee.List([n0 for n0, _ in _DOMINANT_ORDER])
