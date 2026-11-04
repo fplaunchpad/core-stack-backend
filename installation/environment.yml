@@ -29,6 +29,9 @@ dependencies:
   - rasterio
   - gdal=3.6.4
   - geopandas=0.14.1
+  - pyogrio=0.6.0
+  - rasterstats=0.21.0
+  - s2sphere=0.2.5
   - fiona=1.9.5
   - shapely=2.0.2
   - pyproj=3.6.1
