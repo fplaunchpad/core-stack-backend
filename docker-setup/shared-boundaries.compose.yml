@@ -1,0 +1,39 @@
+# Reuse the shared install's admin-boundary data (about 7.5 GB) instead of
+# downloading another copy. corestack.sh adds this file only when
+# CORESTACK_SHARED_ADMIN_DIR is set in nrm_app/.env (setup --personal finds it).
+#
+# Mounted read-only, so no copy can change it. The app reads it under both
+# paths below; on the host both are <checkout>/data.
+
+x-shared-admin: &shared-admin
+  volumes:
+    - ${CORESTACK_SHARED_ADMIN_DIR:?}:/var/tmp/core-stack-data/base_layers/admin-boundary:ro
+    - ${CORESTACK_SHARED_ADMIN_DIR:?}:/app/data/base_layers/admin-boundary:ro
+
+services:
+  app-init:
+    <<: *shared-admin
+  database-init:
+    <<: *shared-admin
+  geoserver-init:
+    <<: *shared-admin
+  data-download:
+    <<: *shared-admin
+  gee-config:
+    <<: *shared-admin
+  tehsil-watershed-setup:
+    <<: *shared-admin
+  backend:
+    <<: *shared-admin
+  celery-general:
+    <<: *shared-admin
+  celery-nrm:
+    <<: *shared-admin
+  celery-layer-bulk:
+    <<: *shared-admin
+  celery-geoserver:
+    <<: *shared-admin
+  celery-beat:
+    <<: *shared-admin
+  celery-heavy:
+    <<: *shared-admin

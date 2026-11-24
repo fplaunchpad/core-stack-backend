@@ -1,0 +1,42 @@
+# The two CoRE Stack websites, added on top of the backend's docker-compose.yml.
+# corestack.sh passes both files to every Compose command. All ${...} values
+# come from nrm_app/.env; corestack.sh writes them there during setup.
+# Each copy tags its own images: its ports and API key are baked into them.
+
+x-frontend: &frontend
+  restart: ${FRONTEND_RESTART:-unless-stopped}
+  networks:
+    - corestack-network
+
+services:
+  explorer:
+    <<: *frontend
+    image: corestack-explorer-local:${CORESTACK_PROJECT:-core-stack}
+    build:
+      context: ${CORESTACK_FRONTEND_DIR:?run corestack.sh setup first}/landscape-explorer
+      dockerfile: ${CORESTACK_SETUP_DIR:?run corestack.sh setup first}/frontend.Dockerfile
+      additional_contexts:
+        setup: ${CORESTACK_SETUP_DIR}
+      args:
+        REACT_APP_API_URL: http://${PUBLIC_HOST:-localhost}:${BACKEND_PORT:-8000}/api/v1
+        REACT_APP_BASEURL: http://${PUBLIC_HOST:-localhost}:${BACKEND_PORT:-8000}
+        REACT_APP_GEOSERVER_URL: ${EXPLORER_GEOSERVER_URL:-https://geoserver.core-stack.org:8443/geoserver/}
+        REACT_APP_API_KEY: ${EXPLORER_API_KEY:-}
+    ports:
+      - "${FRONTEND_BIND_IP:-127.0.0.1}:${EXPLORER_PORT:-3000}:80"
+
+  dashboard:
+    <<: *frontend
+    image: corestack-dashboard-local:${CORESTACK_PROJECT:-core-stack}
+    build:
+      context: ${CORESTACK_FRONTEND_DIR}/admin-dashboard
+      dockerfile: ${CORESTACK_SETUP_DIR}/frontend.Dockerfile
+      additional_contexts:
+        setup: ${CORESTACK_SETUP_DIR}
+      args:
+        # Trailing slash on purpose: the dashboard uses both BASEURL + "api/..." and BASEURL + "/api/...".
+        REACT_APP_BASEURL: http://${PUBLIC_HOST:-localhost}:${BACKEND_PORT:-8000}/
+        REACT_APP_LOCAL_API_BASE_URL: http://${PUBLIC_HOST:-localhost}:${BACKEND_PORT:-8000}
+        REACT_APP_IMAGE_LAYER_URL: http://${PUBLIC_HOST:-localhost}:${GEOSERVER_PORT:-8080}/geoserver/
+    ports:
+      - "${FRONTEND_BIND_IP:-127.0.0.1}:${DASHBOARD_PORT:-3001}:80"

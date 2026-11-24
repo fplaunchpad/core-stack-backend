@@ -1,0 +1,50 @@
+# Lighter settings for a personal test copy (setup --personal). corestack.sh
+# adds this file only when CORESTACK_MODE=personal in nrm_app/.env.
+#
+# - The API runs Django's development server, which reloads by itself when a
+#   .py file changes. No restart needed for API code.
+# - One Celery worker takes every queue (the full setup runs four). After
+#   changing task code, run: corestack.sh restart
+# - GeoServer gets a smaller Java heap.
+# - Nothing starts by itself after a server reboot; run: corestack.sh start
+
+x-personal: &personal
+  restart: "no"
+
+services:
+  postgres:
+    <<: *personal
+  redis:
+    <<: *personal
+
+  geoserver:
+    <<: *personal
+    environment:
+      INITIAL_MEMORY: ${GEOSERVER_INITIAL_MEMORY:-256M}
+      MAXIMUM_MEMORY: ${GEOSERVER_MAXIMUM_MEMORY:-1G}
+
+  backend:
+    <<: *personal
+    command: ["bash", "/opt/corestack-scripts/entrypoint.sh", "python", "manage.py", "runserver", "0.0.0.0:8000"]
+
+  celery-general:
+    <<: *personal
+    command:
+      - bash
+      - /opt/corestack-scripts/entrypoint.sh
+      - celery
+      - -A
+      - nrm_app
+      - worker
+      - --loglevel=INFO
+      - --queues=celery,dpr,waterbody,waterbody1,whatsapp,nrm,layer_bulk,geoserver
+      - --hostname=all@%h
+      - --concurrency=${CELERY_PERSONAL_CONCURRENCY:-1}
+
+  # Not started in a personal copy: celery-general above takes their queues.
+  celery-nrm:
+    profiles: ["full-workers"]
+  celery-layer-bulk:
+    profiles: ["full-workers"]
+  celery-geoserver:
+    profiles: ["full-workers"]

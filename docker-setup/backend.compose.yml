@@ -1,0 +1,50 @@
+# Two fixes added on top of the backend's docker-compose.yml. corestack.sh
+# passes this file to every Compose command.
+#
+# 1. Network name. Upstream names the network "corestack-network" for every
+#    copy. Two copies on one machine would then share it, and a name like
+#    "postgres" could point at the other copy's database. Each copy gets its own.
+#
+# 2. Build limit. Recent Docker versions give image builds an open-file limit
+#    of about 2 billion (normal containers get 1024). micromamba 1.5.10 in the
+#    backend Dockerfile cannot start the gdk-pixbuf post-install script under
+#    that limit and the build stops with "response code: -1 error message:
+#    Invalid argument". Capping the limit during the build fixes it. Every
+#    service that builds the image needs it.
+
+x-build-fix: &build-fix
+  build:
+    ulimits:
+      nofile: 65536
+
+networks:
+  corestack-network:
+    name: ${CORESTACK_NETWORK:-corestack-network}
+
+services:
+  app-init:
+    <<: *build-fix
+  backend:
+    <<: *build-fix
+  celery-beat:
+    <<: *build-fix
+  celery-general:
+    <<: *build-fix
+  celery-geoserver:
+    <<: *build-fix
+  celery-heavy:
+    <<: *build-fix
+  celery-layer-bulk:
+    <<: *build-fix
+  celery-nrm:
+    <<: *build-fix
+  data-download:
+    <<: *build-fix
+  database-init:
+    <<: *build-fix
+  gee-config:
+    <<: *build-fix
+  geoserver-init:
+    <<: *build-fix
+  tehsil-watershed-setup:
+    <<: *build-fix

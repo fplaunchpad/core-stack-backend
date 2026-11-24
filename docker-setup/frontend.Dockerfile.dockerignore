@@ -1,0 +1,6 @@
+# Used by Docker for frontend.Dockerfile only (BuildKit reads <Dockerfile>.dockerignore).
+node_modules
+build
+.git
+.env
+.env.*
